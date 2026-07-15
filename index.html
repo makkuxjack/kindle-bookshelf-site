@@ -183,8 +183,10 @@
     background: var(--modal-overlay);
     overflow-y: auto;
     padding: 24px 16px;
+    overscroll-behavior: contain; /* iPad: モーダル端で背後の一覧へスクロールが連鎖するのを防ぐ */
   }
   #modal.open, #pass-overlay.open { display: block; }
+  body.modal-open { overflow: hidden; }
   #modal-inner {
     background: var(--bg);
     border-radius: 14px;
@@ -606,6 +608,11 @@ function groupBooks(items, overrides, seriesOrder) {
       if (book.recencyRank != null && book.recencyRank < rec) rec = book.recencyRank;
     }
     g.recency = rec;
+
+    // 検索用テキストを事前計算（毎キー入力での正規化をなくし、iPad の入力カクつきを防ぐ）
+    g.searchText = normalizeTitle(
+      g.name + '\n' + g.books.map(({ book }) => book.title + '\n' + formatAuthors(book.authors)).join('\n')
+    ).toLowerCase();
   }
 
   result.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
@@ -799,8 +806,25 @@ function bookCard(entry, opts) {
     input.setAttribute('list', 'series-names');
     input.addEventListener('click', e => e.stopPropagation());
     input.addEventListener('change', () => {
+      const oldName = (opts && opts.group) ? opts.group.name : CURRENT_GROUP_NAME;
       applyLocalOverride('series', book.asin, input.value.trim());
       rebuild(opts && opts.keepModal);
+      // シリーズ改名で旧グループが消滅したら、旧名についていた手動カテゴリ/巻順を
+      // この巻の移動先グループへ引き継ぐ（黙って自動判定に戻るのを防ぐ）
+      if (oldName && !GROUPS.some(g => g.name === oldName)) {
+        const destGroup = GROUPS.find(g => g.books.some(b => b.book.asin === book.asin));
+        const dest = destGroup ? destGroup.name : null;
+        let moved = false;
+        for (const sec of ['category', 'order']) {
+          const v = OVERRIDES[sec][oldName];
+          if (v != null && dest && OVERRIDES[sec][dest] == null) {
+            applyLocalOverride(sec, dest, v);
+            applyLocalOverride(sec, oldName, '');
+            moved = true;
+          }
+        }
+        if (moved) rebuild(opts && opts.keepModal);
+      }
     });
     card.appendChild(input);
     if (opts && opts.group && !(opts && opts.keepModal)) {
@@ -842,12 +866,7 @@ function seriesCard(group) {
 
 function matchQuery(q, group) {
   if (!q) return true;
-  const n = normalizeTitle(q).toLowerCase();
-  if (normalizeTitle(group.name).toLowerCase().includes(n)) return true;
-  return group.books.some(({ book }) =>
-    normalizeTitle(book.title).toLowerCase().includes(n) ||
-    formatAuthors(book.authors).toLowerCase().includes(n)
-  );
+  return group.searchText.includes(normalizeTitle(q).toLowerCase());
 }
 
 function sortGroups(list) {
@@ -919,20 +938,15 @@ function render() {
     content.appendChild(d);
   }
 
-  // datalist（編集用のシリーズ名候補）
-  const dl = document.getElementById('series-names');
-  dl.innerHTML = '';
-  for (const g of GROUPS) {
-    const o = document.createElement('option');
-    o.value = g.name;
-    dl.appendChild(o);
-  }
-
   const meta = window.KINDLE_BOOKS || {};
   const dt = meta.exportedAt ? new Date(meta.exportedAt) : null;
+  // 未書き出しのローカル修正件数（localStorage は消えることがあるので書き出しを促す）
+  const pending = ['series', 'category', 'order']
+    .reduce((n, sec) => n + Object.keys(LOCAL_OV[sec]).length, 0);
   document.getElementById('stats').textContent =
     `${ALL_ITEMS.length}冊 / ${GROUPS.length}グループ` +
-    (dt && !isNaN(dt) ? ` ・ 取得: ${dt.getFullYear()}/${dt.getMonth() + 1}/${dt.getDate()}` : '');
+    (dt && !isNaN(dt) ? ` ・ 取得: ${dt.getFullYear()}/${dt.getMonth() + 1}/${dt.getDate()}` : '') +
+    (pending ? ` ・ 未書き出しの修正: ${pending}件` : '');
 }
 
 function openModal(key) {
@@ -950,17 +964,27 @@ function openModal(key) {
   catWrap.replaceWith(newSel);
   const grid = document.getElementById('modal-grid');
   grid.innerHTML = '';
-  for (const entry of group.books) grid.appendChild(bookCard(entry, { keepModal: true }));
+  for (const entry of group.books) grid.appendChild(bookCard(entry, { keepModal: true, group }));
   document.getElementById('modal').classList.add('open');
+  document.body.classList.add('modal-open');
 }
 function closeModal() {
   CURRENT_GROUP_NAME = null;
   document.getElementById('modal').classList.remove('open');
+  document.body.classList.remove('modal-open');
 }
 
 function rebuild(keepModal) {
   OVERRIDES = computeOverrides();
   GROUPS = groupBooks(ALL_ITEMS, OVERRIDES, SERIES_ORDER);
+  // datalist（編集用のシリーズ名候補）はグループ構成が変わったときだけ作り直す
+  const dl = document.getElementById('series-names');
+  dl.innerHTML = '';
+  for (const g of GROUPS) {
+    const o = document.createElement('option');
+    o.value = g.name;
+    dl.appendChild(o);
+  }
   render();
   if (keepModal && CURRENT_GROUP_NAME) {
     const still = GROUPS.find(g => g.name === CURRENT_GROUP_NAME);
@@ -971,7 +995,12 @@ function rebuild(keepModal) {
 }
 
 /* ---------- イベント ---------- */
-document.getElementById('search').addEventListener('input', render);
+// 1文字ごとの全カード再構築は iPad の日本語入力でカクつくためデバウンスする
+let searchTimer = null;
+document.getElementById('search').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(render, 180);
+});
 document.getElementById('modal-close').addEventListener('click', closeModal);
 document.getElementById('modal').addEventListener('click', e => {
   if (e.target === document.getElementById('modal')) closeModal();
@@ -992,9 +1021,17 @@ document.getElementById('edit-toggle').addEventListener('click', function () {
 });
 
 document.getElementById('export-overrides').addEventListener('click', () => {
+  // category/order は「現存するグループ名」のキーだけ出力する（改名で孤立したゴミを持ち越さない）
+  const names = new Set(GROUPS.map(g => g.name));
+  const cleaned = { series: OVERRIDES.series, category: {}, order: {} };
+  for (const sec of ['category', 'order']) {
+    for (const [k, v] of Object.entries(OVERRIDES[sec])) {
+      if (names.has(k)) cleaned[sec][k] = v;
+    }
+  }
   const content = '// bookshelf.html の編集モードで指定した手動修正（シリーズ名・カテゴリ・巻順）\n' +
     '// このファイルをリポジトリ直下に置くと他のデバイスにも反映されます\n' +
-    'window.KINDLE_OVERRIDES = ' + JSON.stringify(OVERRIDES, null, 2) + ';\n';
+    'window.KINDLE_OVERRIDES = ' + JSON.stringify(cleaned, null, 2) + ';\n';
   const blob = new Blob([content], { type: 'application/javascript' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1005,11 +1042,15 @@ document.getElementById('export-overrides').addEventListener('click', () => {
 
 /* ---------- 起動 ---------- */
 (async () => {
+  // データのロード〜復号（サイトでは 1MB 超+PBKDF2）には数秒かかるため、まず状態を見せる
+  document.getElementById('content').innerHTML = '<div id="empty-msg">読み込み中…</div>';
   let mode = 'plain';
+  let triedEnc = false;
   try { await loadScript('./books.js'); } catch (e) { /* fallthrough */ }
 
   if (!window.KINDLE_BOOKS) {
     // GitHub Pages 用: 暗号化データがあれば復号する
+    triedEnc = true;
     try { await loadScript('./data.enc.js'); } catch (e) { /* fallthrough */ }
     if (window.KINDLE_ENC) {
       try {
@@ -1035,11 +1076,18 @@ document.getElementById('export-overrides').addEventListener('click', () => {
     // Android のファイルマネージャ等から開くと content:// URI になり、
     // 相対パスの books.js 等が権限外で一切読めない。原因を正しく案内する。
     const badProtocol = !/^(https?:|file:)$/.test(location.protocol);
+    // https 配信で data.enc.js の取得に失敗した場合（モバイル回線の電波不良等）は
+    // PC ローカル向けの books.js 案内ではなく再読み込みを案内する
+    const siteLoadFailed = /^https?:$/.test(location.protocol) && triedEnc && !window.KINDLE_ENC;
     document.getElementById('content').innerHTML = badProtocol
       ? '<div id="empty-msg"><b>このページは ' + location.protocol + '// で開かれているため、データファイルを読み込めません。</b><br>' +
         'アプリ内ビューアやファイル共有からの直接オープンでは動作しません。<br>' +
         'ファイルを file:// で開けるブラウザで開くか、ローカルHTTPサーバー経由で開いてください。<br>' +
         '詳細は README.md の「別デバイスで使う」を参照。</div>'
+      : siteLoadFailed
+      ? '<div id="empty-msg">データの読み込みに失敗しました。<br>' +
+        '通信状態を確認して、ページを再読み込みしてください。<br><br>' +
+        '<button class="btn" onclick="location.reload()">再読み込み</button></div>'
       : '<div id="empty-msg">books.js が見つかりません。<br>' +
         'read.amazon.co.jp で取得スクリプト（fetch-library.js / ブックマークレット）を実行し、<br>' +
         'ダウンロードされた books.js をこの HTML と同じフォルダに置いてください。<br>' +
