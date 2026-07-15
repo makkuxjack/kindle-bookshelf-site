@@ -304,6 +304,7 @@
     <input type="password" id="pass-input" autocomplete="current-password" placeholder="パスフレーズ">
     <button class="btn" type="submit">開く</button>
     <div id="pass-error"></div>
+    <div id="pass-hint" style="font-size:11px;color:var(--text-sub);margin-top:8px;"></div>
   </form>
 </div>
 
@@ -623,39 +624,69 @@ async function decryptPayload(enc, pass) {
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(enc.iv) }, key, b64ToBytes(enc.data));
   return JSON.parse(new TextDecoder().decode(plain));
 }
-function askPassphrase(enc) {
+function askPassphrase() {
   return new Promise((resolve) => {
     const overlay = document.getElementById('pass-overlay');
     const form = document.getElementById('pass-form');
     const input = document.getElementById('pass-input');
     const errEl = document.getElementById('pass-error');
+    const hintEl = document.getElementById('pass-hint');
+    const showHint = () => {
+      const dt = window.KINDLE_ENC.encryptedAt ? new Date(window.KINDLE_ENC.encryptedAt) : null;
+      hintEl.textContent = (dt && !isNaN(dt))
+        ? `データ更新: ${dt.getFullYear()}/${dt.getMonth() + 1}/${dt.getDate()} ${dt.getHours()}:${String(dt.getMinutes()).padStart(2, '0')}`
+        : '';
+    };
+    showHint();
     overlay.classList.add('open');
     input.focus();
+    let refreshedCache = false;
     form.onsubmit = async (e) => {
       e.preventDefault();
-      const pass = input.value;
+      const pass = input.value.trim(); // iPad の自動スペース等の混入対策
       if (!pass) return;
       errEl.textContent = '復号中…';
       try {
-        const obj = await decryptPayload(enc, pass);
+        const obj = await decryptPayload(window.KINDLE_ENC, pass);
         localStorage.setItem(PASS_KEY, pass);
         overlay.classList.remove('open');
         resolve(obj);
-      } catch (err) {
-        errEl.textContent = 'パスフレーズが違います';
-        input.select();
+        return;
+      } catch (err) { /* fallthrough */ }
+      // パスフレーズ変更直後は古い data.enc.js がブラウザ/CDN キャッシュに残っていることがある。
+      // 一度だけキャッシュを回避して最新を取り直し、同じパスフレーズで再試行する
+      if (!refreshedCache) {
+        refreshedCache = true;
+        errEl.textContent = '最新データを再取得中…';
+        try {
+          await loadScript('./data.enc.js?cb=' + Math.random().toString(36).slice(2));
+          showHint();
+          const obj = await decryptPayload(window.KINDLE_ENC, pass);
+          localStorage.setItem(PASS_KEY, pass);
+          overlay.classList.remove('open');
+          resolve(obj);
+          return;
+        } catch (err2) { /* fallthrough */ }
       }
+      errEl.textContent = 'パスフレーズが違います（大文字・小文字も区別されます）';
+      input.select();
     };
   });
 }
 async function decryptFlow() {
-  const enc = window.KINDLE_ENC;
   const saved = localStorage.getItem(PASS_KEY);
   if (saved) {
-    try { return await decryptPayload(enc, saved); }
-    catch (e) { localStorage.removeItem(PASS_KEY); }
+    try { return await decryptPayload(window.KINDLE_ENC, saved); }
+    catch (e) {
+      // 保存済みパスフレーズが正しくてもキャッシュの data.enc.js が古いと失敗する。
+      // 一度だけ最新を取り直してから、保存済みパスフレーズを諦める
+      try {
+        await loadScript('./data.enc.js?cb=' + Math.random().toString(36).slice(2));
+        return await decryptPayload(window.KINDLE_ENC, saved);
+      } catch (e2) { localStorage.removeItem(PASS_KEY); }
+    }
   }
-  return askPassphrase(enc);
+  return askPassphrase();
 }
 
 /* ---------- 描画 ---------- */
