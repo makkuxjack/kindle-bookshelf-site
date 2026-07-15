@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kindle 本棚</title>
+<style>
+  :root {
+    --bg: #f6f4ef;
+    --card: #ffffff;
+    --text: #2b2b2b;
+    --text-sub: #777;
+    --accent: #0f7b6c;
+    --border: #e0ddd4;
+    --shadow: 0 1px 4px rgba(0,0,0,.10);
+    --shadow-hover: 0 4px 14px rgba(0,0,0,.18);
+    --badge-bg: #0f7b6c;
+    --badge-text: #fff;
+    --modal-overlay: rgba(0,0,0,.5);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e;
+      --card: #2a2a2d;
+      --text: #e8e6e1;
+      --text-sub: #9a9a9a;
+      --accent: #4fb8a8;
+      --border: #3a3a3e;
+      --shadow: 0 1px 4px rgba(0,0,0,.4);
+      --shadow-hover: 0 4px 14px rgba(0,0,0,.6);
+      --modal-overlay: rgba(0,0,0,.7);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 16px 0;
+  }
+  .header-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 8px;
+  }
+  header h1 { font-size: 18px; margin: 0; white-space: nowrap; }
+  #search {
+    flex: 1;
+    min-width: 160px;
+    max-width: 420px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    font-size: 14px;
+  }
+  #stats { font-size: 12px; color: var(--text-sub); white-space: nowrap; }
+  .btn, select.btn {
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #cat-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-bottom: 8px;
+  }
+  .cat-tab {
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .cat-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+  h2 { font-size: 15px; color: var(--text-sub); margin: 20px 0 10px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 14px;
+  }
+  @media (max-width: 480px) {
+    .grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; }
+  }
+  .card {
+    background: var(--card);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform .12s, box-shadow .12s;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .card:hover { transform: translateY(-3px); box-shadow: var(--shadow-hover); }
+  .cover {
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    object-fit: cover;
+    display: block;
+    background: var(--border);
+  }
+  .cover-placeholder {
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    font-size: 12px;
+    text-align: center;
+    color: #fff;
+    background: linear-gradient(140deg, #4a6572, #232e33);
+    word-break: break-word;
+  }
+  .card-label {
+    padding: 6px 8px;
+    font-size: 12px;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .card-sub {
+    padding: 0 8px 8px;
+    font-size: 11px;
+    color: var(--text-sub);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .count-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: var(--badge-bg);
+    color: var(--badge-text);
+    font-size: 11px;
+    font-weight: bold;
+    padding: 3px 8px;
+    border-radius: 999px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.3);
+  }
+  .sample-badge {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    background: #b3541e;
+    color: #fff;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  #modal, #pass-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: var(--modal-overlay);
+    overflow-y: auto;
+    padding: 24px 16px;
+  }
+  #modal.open, #pass-overlay.open { display: block; }
+  #modal-inner {
+    background: var(--bg);
+    border-radius: 14px;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 20px;
+    position: relative;
+  }
+  #modal-title { font-size: 17px; margin: 0 42px 4px 0; }
+  #modal-sub {
+    font-size: 12px;
+    color: var(--text-sub);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  #modal-cat { font-size: 12px; padding: 3px 6px; }
+  #modal-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-size: 16px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  #pass-form {
+    background: var(--bg);
+    border-radius: 14px;
+    max-width: 380px;
+    margin: 15vh auto 0;
+    padding: 24px;
+    text-align: center;
+  }
+  #pass-form h3 { margin: 0 0 14px; font-size: 16px; }
+  #pass-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    font-size: 15px;
+    margin-bottom: 12px;
+  }
+  #pass-error { color: #c0392b; font-size: 12px; margin-top: 10px; min-height: 1em; }
+  .edit-input, .edit-select {
+    width: 100%;
+    padding: 4px 6px;
+    margin: 0 0 6px;
+    font-size: 11px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--text);
+  }
+  #empty-msg {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-sub);
+    line-height: 2;
+  }
+  #edit-hint {
+    display: none;
+    font-size: 12px;
+    background: var(--accent);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 8px;
+    margin-bottom: 12px;
+  }
+  body.editing #edit-hint { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-row">
+    <h1>📚 Kindle 本棚</h1>
+    <input id="search" type="search" placeholder="シリーズ名・タイトル・著者で検索">
+    <span id="stats"></span>
+    <select id="sort-select" class="btn" title="シリーズの並び順">
+      <option value="recency">最近読んだ順</option>
+      <option value="name">50音順</option>
+    </select>
+    <button class="btn" id="edit-toggle">シリーズ編集</button>
+    <button class="btn" id="export-overrides" title="手動修正を overrides.js として保存（リポジトリに置くと他デバイスにも反映）">修正を書き出す</button>
+  </div>
+  <div id="cat-tabs"></div>
+</header>
+<main>
+  <div id="edit-hint">編集モード: 各巻の入力欄にシリーズ名を、セレクトにカテゴリを指定できます（空欄/「自動」に戻すと自動判定に戻る）。修正はこのブラウザに保存されます。「修正を書き出す」で overrides.js を保存し、リポジトリに置くと他のデバイスにも反映されます。</div>
+  <div id="content"></div>
+</main>
+
+<div id="modal">
+  <div id="modal-inner">
+    <button id="modal-close" title="閉じる (Esc)">✕</button>
+    <h3 id="modal-title"></h3>
+    <div id="modal-sub">
+      <span id="modal-info"></span>
+      <label>カテゴリ: <select id="modal-cat"></select></label>
+    </div>
+    <div class="grid" id="modal-grid"></div>
+  </div>
+</div>
+
+<div id="pass-overlay">
+  <form id="pass-form">
+    <h3>🔒 パスフレーズを入力</h3>
+    <input type="password" id="pass-input" autocomplete="current-password" placeholder="パスフレーズ">
+    <button class="btn" type="submit">開く</button>
+    <div id="pass-error"></div>
+  </form>
+</div>
+
+<datalist id="series-names"></datalist>
+
+<script>
+'use strict';
+
+/* ---------- データ読み込み（file:// でも動くよう script タグで） ---------- */
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => resolve(true);
+    s.onerror = () => { s.remove(); reject(new Error(src)); };
+    document.head.appendChild(s);
+  });
+}
+
+const OVERRIDES_KEY = 'kindle-bookshelf-overrides';
+const PASS_KEY = 'kindle-bookshelf-pass';
+const SORT_KEY = 'kindle-bookshelf-sort';
+const CAT_KEY = 'kindle-bookshelf-cat';
+
+// overrides は { series: {asin: シリーズ名}, category: {シリーズ名: カテゴリid}, order: {シリーズ名: [asin,...]} }。
+// 旧形式（フラットな asin→シリーズ名）も読めるように正規化する
+function normalizeOverrides(raw) {
+  if (!raw || typeof raw !== 'object') return { series: {}, category: {}, order: {} };
+  if (raw.series || raw.category || raw.order) {
+    return {
+      series: Object.assign({}, raw.series || {}),
+      category: Object.assign({}, raw.category || {}),
+      order: Object.assign({}, raw.order || {}),
+    };
+  }
+  return { series: Object.assign({}, raw), category: {}, order: {} };
+}
+
+// localStorage には overrides.js（ファイル）との「差分」だけを保存する。
+// 値が null のエントリは「ファイル側の指定を打ち消して自動判定に戻す」マーカー。
+// マージ済み全体を保存するとファイル側の後日の更新が反映されなくなるため、この形を崩さないこと。
+function loadLocalOverrides() {
+  try { return normalizeOverrides(JSON.parse(localStorage.getItem(OVERRIDES_KEY) || '{}')); }
+  catch (e) { return { series: {}, category: {}, order: {} }; }
+}
+function saveLocalOverrides(ov) {
+  localStorage.setItem(OVERRIDES_KEY, JSON.stringify(ov));
+}
+
+/* ---------- タイトル正規化・シリーズ推定 ---------- */
+function normalizeTitle(t) {
+  return String(t || '')
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/　/g, ' ')
+    .trim();
+}
+
+const PART_MAP = { '上': 1, '前': 1, '前編': 1, '中': 2, '下': 3, '後': 3, '後編': 3 };
+
+function isVolumeParen(inner) {
+  inner = inner.trim();
+  return /^\d+(?:\.\d+)?$/.test(inner) || PART_MAP.hasOwnProperty(inner);
+}
+
+function romanToInt(s) {
+  const vals = { I: 1, V: 5, X: 10 };
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const v = vals[s[i]], next = vals[s[i + 1]] || 0;
+    n += v < next ? -v : v;
+  }
+  return n;
+}
+
+// タイトルから { seriesName, volume } を推定する
+function extractSeries(rawTitle) {
+  let t = normalizeTitle(rawTitle);
+
+  // 末尾の飾り（レーベル括弧・【電子特典付き】・<シリーズ名> 等）を繰り返し除去。
+  // ただし巻数を表すもの（数字・上中下）は残す
+  let prev;
+  do {
+    prev = t;
+    const m = t.match(/[（(]([^（()）]*)[)）]\s*$/);
+    if (m && !isVolumeParen(m[1])) t = t.slice(0, m.index).trim();
+    const m2 = t.match(/【([^【】]*)】\s*$/);
+    if (m2 && !isVolumeParen(m2[1])) t = t.slice(0, m2.index).trim();
+    const m3 = t.match(/[<＜]([^<>＜＞]*)[>＞]\s*$/);
+    if (m3) t = t.slice(0, m3.index).trim();
+  } while (t !== prev && t.length > 0);
+
+  // 中間の【短編】【通常版】【電子特典付き】等も除去（先頭の【フルカラー】等と巻数【N】は残す）
+  t = t.replace(/(.)【([^【】]*)】/g, (m, pre, inner) => isVolumeParen(inner) ? m : pre + ' ')
+       .replace(/\s+/g, ' ').trim();
+
+  // 巻数の抽出: まず末尾パターン（優先順）。数字は 10.5 のような小数巻（番外編）も拾う。
+  // lookbehind ((?<=…)) はリテラルで書くと非対応ブラウザでスクリプト全体がパースエラーになるため、
+  // 必ず new RegExp + safeRe 経由（非対応環境ではそのパターンだけ無効化される）
+  let volume = null;
+  const NUM = '(\\d+(?:\\.\\d+)?)';
+  const NEVER_MATCH = /$^/;
+  const safeRe = (src) => { try { return new RegExp(src); } catch (e) { return NEVER_MATCH; } };
+  const tailPatterns = [
+    { re: new RegExp('[（(]\\s*' + NUM + '\\s*[)）]\\s*$'), num: m => parseFloat(m[1]) },      // （３２）
+    { re: new RegExp('【\\s*' + NUM + '\\s*】\\s*$'), num: m => parseFloat(m[1]) },            // 【３２】
+    { re: /[（(]\s*(上|中|下|前|後|前編|後編)\s*[)）]\s*$/, num: m => PART_MAP[m[1]] },        // (上)
+    { re: new RegExp('第\\s*' + NUM + '\\s*[巻話集]\\s*$'), num: m => parseFloat(m[1]) },      // 第3巻
+    { re: new RegExp('\\s' + NUM + '\\s*巻\\s*$'), num: m => parseFloat(m[1]) },               // ○○ 3巻
+    { re: new RegExp('[Vv][Oo][Ll]\\.?\\s*' + NUM + '\\s*$'), num: m => parseFloat(m[1]) },    // vol.2
+    { re: new RegExp('[#＃]\\s*' + NUM + '\\s*$'), num: m => parseFloat(m[1]) },               // #3
+    { re: safeRe('(?<=[^\\x00-\\x7F])\\s*([IVX]{1,7})\\s*$'), num: m => romanToInt(m[1]) },    // ○○VI（ローマ数字巻）
+    { re: new RegExp('(?:\\s|[：:])' + NUM + '\\s*[.。]?\\s*$'), num: m => parseFloat(m[1]) }, // ○○ 3
+    { re: new RegExp(NUM + '\\s*[.。]?\\s*$'), num: m => parseFloat(m[1]) },                   // ○○3 / ○○10.5
+  ];
+  for (const p of tailPatterns) {
+    const m = t.match(p.re);
+    if (m) {
+      const rest = t.slice(0, m.index).trim().replace(/[‐‑–—―\-～〜:：]+$/, '').trim();
+      if (rest.length > 0) {           // シリーズ名が空になる場合は巻数とみなさない
+        volume = p.num(m);
+        t = rest;
+      }
+      break;
+    }
+  }
+
+  // 末尾で見つからなければタイトル中間の強いマーカーを探す
+  // （「○○ #16 サブタイトル」「○○(1) サブタイトル」「○○ 10巻 番外編」等。
+  //   以降のサブタイトルは捨ててシリーズ名だけ残す。素の数字は誤爆しやすいので拾わない）
+  if (volume === null) {
+    const midPatterns = [
+      new RegExp('\\s*[#＃]\\s*' + NUM + '(?=\\s|$)'),
+      new RegExp('\\s*[（(]\\s*' + NUM + '\\s*[)）]'),
+      new RegExp('\\s*【\\s*' + NUM + '\\s*】'),
+      new RegExp('\\s*第\\s*' + NUM + '\\s*[巻話集]'),
+      new RegExp('\\s+' + NUM + '\\s*巻'),
+      // ラノベ定番の「タイトルN サブタイトル」直結形式（例: ソードアート・オンライン1 アインクラッド）。
+      // 誤爆を避けるため数字の直前は非ASCII、直後にスペース+続きがある場合のみ
+      safeRe('(?<=[^\\x00-\\x7F])' + NUM + '(?=\\s+\\S)'),
+      // スペース区切りの中間数字（例: ○○ですよ？ 4 ○○ですよ？）。数字単独でサブタイトルが続く場合のみ
+      new RegExp('\\s' + NUM + '(?=\\s+\\S)'),
+    ];
+    for (const re of midPatterns) {
+      const m = t.match(re);
+      if (m) {
+        const rest = t.slice(0, m.index).trim().replace(/[‐‑–—―\-～〜:：]+$/, '').trim();
+        if (rest.length > 0) {
+          volume = parseFloat(m[1]);
+          t = rest;
+        }
+        break;
+      }
+    }
+  }
+
+  return { seriesName: t || normalizeTitle(rawTitle), volume };
+}
+
+function formatAuthors(a) {
+  const list = Array.isArray(a) ? a : (a ? [a] : []);
+  return list.map(x => String(x).replace(/[:：]\s*$/, '').trim()).filter(Boolean).join('、');
+}
+
+function readerUrl(book) {
+  if (book.webReaderUrl && /^https?:\/\//.test(book.webReaderUrl)) return book.webReaderUrl;
+  const origin = (window.KINDLE_BOOKS && window.KINDLE_BOOKS.origin) || 'https://read.amazon.co.jp';
+  return origin + '/kindle-library/manga-wr/' + encodeURIComponent(book.asin);
+}
+
+/* ---------- カテゴリ判定 ---------- */
+const CATEGORIES = [
+  { id: 'comic', label: '漫画' },
+  { id: 'adult', label: '成人向け' },
+  { id: 'lightnovel', label: 'ラノベ' },
+  { id: 'bungei', label: '文芸' },
+  { id: 'jitsuyo', label: '実用書・その他' },
+  { id: 'aozora', label: '青空文庫' },
+];
+const CAT_LABEL = Object.fromEntries(CATEGORIES.map(c => [c.id, c.label]));
+
+const LN_LABEL_RE = new RegExp([
+  '電撃文庫', 'ＭＦ文庫', 'MF文庫', 'ファンタジア文庫', 'スニーカー文庫', 'ガガガ文庫',
+  'ＧＡ文庫', 'GA文庫', 'ＨＪ文庫', 'HJ文庫', 'オーバーラップ文庫', 'ファミ通文庫',
+  '講談社ラノベ文庫', 'ダッシュエックス文庫', 'スーパーダッシュ文庫', '電撃の新文芸',
+  'ビーンズ文庫', 'コバルト文庫', '一迅社文庫', 'このライトノベルがすごい！文庫',
+  'レジェンドノベルス', 'ＧＡノベル', 'GAノベル', 'オーバーラップノベルス', 'モンスター文庫',
+  'ヒーロー文庫', 'カドカワBOOKS', 'カドカワＢＯＯＫＳ', 'MFブックス', 'ＭＦブックス',
+  'アース・スターノベル', 'サーガフォレスト', 'ノクスノベルス', 'PASH!ブックス', 'ＰＡＳＨ！ブックス',
+  '角川スニーカー', 'ソフトバンク文庫', 'スマッシュ文庫', 'ぽにきゃんBOOKS', 'DREノベルス',
+  'ＨＪノベルス', 'HJノベルス', 'アルファポリス', 'ツギクルブックス', 'Mノベルス', 'Ｍノベルス',
+].join('|'));
+
+const ADULT_RE = /成人向け|１８禁|18禁|Ｒ－?１８|R-?18(?![0-9])|アダルト/i;
+
+// 1冊ぶんの自動カテゴリ判定。
+// webReaderUrl の /manga-wr/（Amazonがコミックビューアを割り当てた本）が最も信頼できる漫画シグナル
+function detectCategory(book) {
+  const title = String(book.title || '');
+  const pub = String(book.publisher || (book.publishers && book.publishers[0]) || '');
+  if (/青空文庫/.test(pub) || /青空文庫/.test(title)) return 'aozora';
+  if (ADULT_RE.test(title) || ADULT_RE.test(pub)) return 'adult';
+  if (/\/manga-wr\//.test(String(book.webReaderUrl || ''))) return 'comic';
+  if (LN_LABEL_RE.test(title)) return 'lightnovel';
+  if (/新書/.test(title)) return 'jitsuyo';
+  if (/文庫/.test(title)) return 'bungei';
+  return 'jitsuyo';
+}
+
+/* ---------- グルーピング ---------- */
+function groupBooks(items, overrides, seriesOrder) {
+  const groups = new Map(); // key -> { key, name, books: [{book, volume}] }
+
+  // series-order.js（Webで調べた正式刊行順）は「巻順」だけでなく「シリーズへの所属」も解決する。
+  // 青ブタ型（巻数がなくタイトルも毎巻違うシリーズ）はタイトル推定では同じシリーズに集まらないため
+  const orderLookup = new Map(); // asin -> シリーズ名
+  for (const [name, asins] of Object.entries(seriesOrder || {})) {
+    if (Array.isArray(asins)) for (const asin of asins) orderLookup.set(asin, name);
+  }
+
+  for (const book of items) {
+    const ex = extractSeries(book.title);
+    const manual = overrides.series[book.asin];
+    const fromOrder = orderLookup.get(book.asin);
+    let key, name;
+    if (manual) {
+      key = 'ov:' + manual;
+      name = manual;
+    } else if (fromOrder) {
+      key = 'so:' + fromOrder;
+      name = fromOrder;
+    } else if (book.seriesAsin) {
+      key = 'sa:' + book.seriesAsin;
+      name = null; // 後でメンバーから決める
+    } else {
+      key = 'tt:' + ex.seriesName;
+      name = ex.seriesName;
+    }
+    const volume = (book.seriesNumber != null && book.seriesNumber !== '')
+      ? Number(book.seriesNumber) : ex.volume;
+
+    if (!groups.has(key)) groups.set(key, { key, name, books: [] });
+    groups.get(key).books.push({ book, volume, guessedName: ex.seriesName });
+  }
+
+  // seriesAsin グループの表示名 = メンバーの推定シリーズ名の最頻値
+  for (const g of groups.values()) {
+    if (g.name == null) {
+      const freq = new Map();
+      for (const b of g.books) freq.set(b.guessedName, (freq.get(b.guessedName) || 0) + 1);
+      let best = '', bestN = -1;
+      for (const [n, c] of freq) if (c > bestN) { best = n; bestN = c; }
+      g.name = best;
+    }
+  }
+
+  // 同名グループを統合（一部の巻だけ seriesAsin が欠けている場合や、
+  // 手動修正で既存シリーズ名を指定した場合の分裂対策）
+  const byName = new Map();
+  for (const g of groups.values()) {
+    const existing = byName.get(g.name);
+    if (existing) existing.books.push(...g.books);
+    else byName.set(g.name, g);
+  }
+
+  const result = [...byName.values()];
+  for (const g of result) {
+    // 巻の並び: 明示的な刊行順 (overrides.order / series-order.js) > 巻番号 > 購入が古い順 > タイトル順
+    const orderArr = overrides.order[g.name] || (seriesOrder || {})[g.name];
+    const orderIdx = orderArr ? new Map(orderArr.map((asin, i) => [asin, i])) : null;
+    g.books.sort((a, b) => {
+      if (orderIdx) {
+        const oa = orderIdx.has(a.book.asin) ? orderIdx.get(a.book.asin) : Infinity;
+        const ob = orderIdx.has(b.book.asin) ? orderIdx.get(b.book.asin) : Infinity;
+        if (oa !== ob) return oa - ob;
+      }
+      if (a.volume != null && b.volume != null && a.volume !== b.volume) return a.volume - b.volume;
+      if (a.volume != null && b.volume == null) return -1;
+      if (a.volume == null && b.volume != null) return 1;
+      // acquisitionRank は 0 が最新購入。巻数不明どうしは「購入が古い順」（≒読み始めた順）に並べる
+      const ra = a.book.acquisitionRank, rb = b.book.acquisitionRank;
+      if (ra != null && rb != null && ra !== rb) return rb - ra;
+      return normalizeTitle(a.book.title).localeCompare(normalizeTitle(b.book.title), 'ja');
+    });
+
+    // カテゴリ: メンバーの多数決 → 手動指定があればそちら
+    const freq = new Map();
+    for (const { book } of g.books) {
+      const c = detectCategory(book);
+      freq.set(c, (freq.get(c) || 0) + 1);
+    }
+    let best = 'jitsuyo', bestN = -1;
+    for (const [c, n] of freq) if (n > bestN) { best = c; bestN = n; }
+    g.autoCategory = best;
+    g.category = overrides.category[g.name] || best;
+
+    // 最近読んだ度（グループ内で最も最近の recencyRank。0が最も最近）
+    let rec = Infinity;
+    for (const { book } of g.books) {
+      if (book.recencyRank != null && book.recencyRank < rec) rec = book.recencyRank;
+    }
+    g.recency = rec;
+  }
+
+  result.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  return result;
+}
+
+/* ---------- 復号（GitHub Pages 用の暗号化データ） ---------- */
+function b64ToBytes(s) {
+  return Uint8Array.from(atob(s), c => c.charCodeAt(0));
+}
+async function decryptPayload(enc, pass) {
+  const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: b64ToBytes(enc.salt), iterations: 310000, hash: 'SHA-256' },
+    km, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(enc.iv) }, key, b64ToBytes(enc.data));
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+function askPassphrase(enc) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('pass-overlay');
+    const form = document.getElementById('pass-form');
+    const input = document.getElementById('pass-input');
+    const errEl = document.getElementById('pass-error');
+    overlay.classList.add('open');
+    input.focus();
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const pass = input.value;
+      if (!pass) return;
+      errEl.textContent = '復号中…';
+      try {
+        const obj = await decryptPayload(enc, pass);
+        localStorage.setItem(PASS_KEY, pass);
+        overlay.classList.remove('open');
+        resolve(obj);
+      } catch (err) {
+        errEl.textContent = 'パスフレーズが違います';
+        input.select();
+      }
+    };
+  });
+}
+async function decryptFlow() {
+  const enc = window.KINDLE_ENC;
+  const saved = localStorage.getItem(PASS_KEY);
+  if (saved) {
+    try { return await decryptPayload(enc, saved); }
+    catch (e) { localStorage.removeItem(PASS_KEY); }
+  }
+  return askPassphrase(enc);
+}
+
+/* ---------- 描画 ---------- */
+let ALL_ITEMS = [];
+let FILE_OV = { series: {}, category: {}, order: {} };  // overrides.js 由来（このセッション中は読み取り専用）
+let LOCAL_OV = { series: {}, category: {}, order: {} }; // localStorage の差分（null = ファイル値の打ち消し）
+let OVERRIDES = { series: {}, category: {}, order: {} };
+let SERIES_ORDER = {}; // series-order.js 由来（Webで調べた正式刊行順）
+let GROUPS = [];
+let EDITING = false;
+let CURRENT_GROUP_NAME = null;
+let SORT_MODE = localStorage.getItem(SORT_KEY) || 'recency';
+let CURRENT_CAT = localStorage.getItem(CAT_KEY) || 'all';
+
+function computeOverrides() {
+  const out = {};
+  for (const sec of ['series', 'category', 'order']) {
+    const merged = Object.assign({}, FILE_OV[sec]);
+    for (const [k, v] of Object.entries(LOCAL_OV[sec])) {
+      if (v === null) delete merged[k];
+      else merged[k] = v;
+    }
+    out[sec] = merged;
+  }
+  return out;
+}
+
+// 差分方式でローカル修正を記録する（value が空文字なら「自動判定に戻す」）
+function applyLocalOverride(section, key, value) {
+  const fileVal = FILE_OV[section][key];
+  if (value) {
+    if (fileVal === value) delete LOCAL_OV[section][key];
+    else LOCAL_OV[section][key] = value;
+  } else {
+    if (fileVal != null) LOCAL_OV[section][key] = null;
+    else delete LOCAL_OV[section][key];
+  }
+  saveLocalOverrides(LOCAL_OV);
+}
+
+function coverEl(book) {
+  if (book.productUrl) {
+    const img = document.createElement('img');
+    img.className = 'cover';
+    img.loading = 'lazy';
+    img.alt = book.title;
+    img.src = book.productUrl;
+    img.onerror = () => { img.replaceWith(placeholderEl(book)); };
+    return img;
+  }
+  return placeholderEl(book);
+}
+function placeholderEl(book) {
+  const d = document.createElement('div');
+  d.className = 'cover-placeholder';
+  d.textContent = book.title;
+  return d;
+}
+
+function catSelectEl(group, className) {
+  const sel = document.createElement('select');
+  sel.className = className || '';
+  const auto = document.createElement('option');
+  auto.value = '';
+  auto.textContent = '自動（' + (CAT_LABEL[group.autoCategory] || group.autoCategory) + '）';
+  sel.appendChild(auto);
+  for (const c of CATEGORIES) {
+    const o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = c.label;
+    sel.appendChild(o);
+  }
+  sel.value = OVERRIDES.category[group.name] || '';
+  sel.addEventListener('click', e => e.stopPropagation());
+  sel.addEventListener('change', () => {
+    applyLocalOverride('category', group.name, sel.value);
+    rebuild(true);
+  });
+  return sel;
+}
+
+function bookCard(entry, opts) {
+  const { book, volume } = entry;
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.appendChild(coverEl(book));
+
+  if (String(book.resourceType || '').includes('SAMPLE')) {
+    const s = document.createElement('span');
+    s.className = 'sample-badge';
+    s.textContent = 'サンプル';
+    card.appendChild(s);
+  }
+
+  const label = document.createElement('div');
+  label.className = 'card-label';
+  label.textContent = book.title;
+  card.appendChild(label);
+
+  const sub = document.createElement('div');
+  sub.className = 'card-sub';
+  sub.textContent = (volume != null ? `${volume}巻 ・ ` : '') + formatAuthors(book.authors);
+  card.appendChild(sub);
+
+  if (EDITING) {
+    const input = document.createElement('input');
+    input.className = 'edit-input';
+    input.placeholder = 'シリーズ名を指定';
+    input.value = OVERRIDES.series[book.asin] || '';
+    input.setAttribute('list', 'series-names');
+    input.addEventListener('click', e => e.stopPropagation());
+    input.addEventListener('change', () => {
+      applyLocalOverride('series', book.asin, input.value.trim());
+      rebuild(opts && opts.keepModal);
+    });
+    card.appendChild(input);
+    if (opts && opts.group && !(opts && opts.keepModal)) {
+      // 単巻カードにはカテゴリ変更セレクトも出す（シリーズはモーダル側で変更）
+      card.appendChild(catSelectEl(opts.group, 'edit-select'));
+    }
+  }
+
+  card.addEventListener('click', () => {
+    window.open(readerUrl(book), '_blank', 'noopener');
+  });
+  return card;
+}
+
+function seriesCard(group) {
+  const rep = group.books[0].book; // 並び順の先頭 = 1巻（または正式な1作目）
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.appendChild(coverEl(rep));
+
+  const badge = document.createElement('span');
+  badge.className = 'count-badge';
+  badge.textContent = `${group.books.length}冊`;
+  card.appendChild(badge);
+
+  const label = document.createElement('div');
+  label.className = 'card-label';
+  label.textContent = group.name;
+  card.appendChild(label);
+
+  const sub = document.createElement('div');
+  sub.className = 'card-sub';
+  sub.textContent = formatAuthors(rep.authors);
+  card.appendChild(sub);
+
+  card.addEventListener('click', () => openModal(group.key));
+  return card;
+}
+
+function matchQuery(q, group) {
+  if (!q) return true;
+  const n = normalizeTitle(q).toLowerCase();
+  if (normalizeTitle(group.name).toLowerCase().includes(n)) return true;
+  return group.books.some(({ book }) =>
+    normalizeTitle(book.title).toLowerCase().includes(n) ||
+    formatAuthors(book.authors).toLowerCase().includes(n)
+  );
+}
+
+function sortGroups(list) {
+  const sorted = [...list];
+  if (SORT_MODE === 'recency') {
+    sorted.sort((a, b) => (a.recency - b.recency) || a.name.localeCompare(b.name, 'ja'));
+  } else {
+    sorted.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  }
+  return sorted;
+}
+
+function renderTabs() {
+  const bar = document.getElementById('cat-tabs');
+  bar.innerHTML = '';
+  const counts = new Map();
+  for (const g of GROUPS) counts.set(g.category, (counts.get(g.category) || 0) + g.books.length);
+  const tabs = [{ id: 'all', label: 'すべて', count: ALL_ITEMS.length }];
+  for (const c of CATEGORIES) {
+    if (counts.has(c.id)) tabs.push({ id: c.id, label: c.label, count: counts.get(c.id) });
+  }
+  if (!tabs.some(t => t.id === CURRENT_CAT)) CURRENT_CAT = 'all';
+  for (const t of tabs) {
+    const btn = document.createElement('button');
+    btn.className = 'cat-tab' + (t.id === CURRENT_CAT ? ' active' : '');
+    btn.textContent = `${t.label} (${t.count})`;
+    btn.addEventListener('click', () => {
+      CURRENT_CAT = t.id;
+      localStorage.setItem(CAT_KEY, CURRENT_CAT);
+      render();
+    });
+    bar.appendChild(btn);
+  }
+}
+
+function render() {
+  renderTabs();
+  const q = document.getElementById('search').value.trim();
+  const content = document.getElementById('content');
+  content.innerHTML = '';
+
+  let visible = GROUPS.filter(g => matchQuery(q, g));
+  if (CURRENT_CAT !== 'all') visible = visible.filter(g => g.category === CURRENT_CAT);
+  const series = sortGroups(visible.filter(g => g.books.length >= 2));
+  const singles = sortGroups(visible.filter(g => g.books.length === 1));
+
+  if (series.length) {
+    const h = document.createElement('h2');
+    h.textContent = `シリーズ（${series.length}）`;
+    content.appendChild(h);
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    for (const g of series) grid.appendChild(seriesCard(g));
+    content.appendChild(grid);
+  }
+  if (singles.length) {
+    const h = document.createElement('h2');
+    h.textContent = `単巻・その他（${singles.length}）`;
+    content.appendChild(h);
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    for (const g of singles) grid.appendChild(bookCard(g.books[0], { group: g }));
+    content.appendChild(grid);
+  }
+  if (!series.length && !singles.length) {
+    const d = document.createElement('div');
+    d.id = 'empty-msg';
+    d.textContent = q ? '該当する本がありません' : '';
+    content.appendChild(d);
+  }
+
+  // datalist（編集用のシリーズ名候補）
+  const dl = document.getElementById('series-names');
+  dl.innerHTML = '';
+  for (const g of GROUPS) {
+    const o = document.createElement('option');
+    o.value = g.name;
+    dl.appendChild(o);
+  }
+
+  const meta = window.KINDLE_BOOKS || {};
+  const dt = meta.exportedAt ? new Date(meta.exportedAt) : null;
+  document.getElementById('stats').textContent =
+    `${ALL_ITEMS.length}冊 / ${GROUPS.length}グループ` +
+    (dt && !isNaN(dt) ? ` ・ 取得: ${dt.getFullYear()}/${dt.getMonth() + 1}/${dt.getDate()}` : '');
+}
+
+function openModal(key) {
+  const group = GROUPS.find(g => g.key === key);
+  if (!group) return;
+  // key は編集操作で変わり得る（同名グループ統合の先勝ちで ov:/sa:/tt: が入れ替わる）ため
+  // rebuild 後の追跡は名前で行う
+  CURRENT_GROUP_NAME = group.name;
+  document.getElementById('modal-title').textContent = group.name;
+  document.getElementById('modal-info').textContent =
+    `${group.books.length}冊 ・ ${formatAuthors(group.books[0].book.authors)}`;
+  const catWrap = document.getElementById('modal-cat');
+  const newSel = catSelectEl(group);
+  newSel.id = 'modal-cat';
+  catWrap.replaceWith(newSel);
+  const grid = document.getElementById('modal-grid');
+  grid.innerHTML = '';
+  for (const entry of group.books) grid.appendChild(bookCard(entry, { keepModal: true }));
+  document.getElementById('modal').classList.add('open');
+}
+function closeModal() {
+  CURRENT_GROUP_NAME = null;
+  document.getElementById('modal').classList.remove('open');
+}
+
+function rebuild(keepModal) {
+  OVERRIDES = computeOverrides();
+  GROUPS = groupBooks(ALL_ITEMS, OVERRIDES, SERIES_ORDER);
+  render();
+  if (keepModal && CURRENT_GROUP_NAME) {
+    const still = GROUPS.find(g => g.name === CURRENT_GROUP_NAME);
+    if (still) openModal(still.key); else closeModal();
+  } else {
+    closeModal();
+  }
+}
+
+/* ---------- イベント ---------- */
+document.getElementById('search').addEventListener('input', render);
+document.getElementById('modal-close').addEventListener('click', closeModal);
+document.getElementById('modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal')) closeModal();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+document.getElementById('sort-select').addEventListener('change', function () {
+  SORT_MODE = this.value;
+  localStorage.setItem(SORT_KEY, SORT_MODE);
+  render();
+});
+
+document.getElementById('edit-toggle').addEventListener('click', function () {
+  EDITING = !EDITING;
+  this.classList.toggle('active', EDITING);
+  document.body.classList.toggle('editing', EDITING);
+  rebuild(true);
+});
+
+document.getElementById('export-overrides').addEventListener('click', () => {
+  const content = '// bookshelf.html の編集モードで指定した手動修正（シリーズ名・カテゴリ・巻順）\n' +
+    '// このファイルをリポジトリ直下に置くと他のデバイスにも反映されます\n' +
+    'window.KINDLE_OVERRIDES = ' + JSON.stringify(OVERRIDES, null, 2) + ';\n';
+  const blob = new Blob([content], { type: 'application/javascript' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'overrides.js';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+/* ---------- 起動 ---------- */
+(async () => {
+  let mode = 'plain';
+  try { await loadScript('./books.js'); } catch (e) { /* fallthrough */ }
+
+  if (!window.KINDLE_BOOKS) {
+    // GitHub Pages 用: 暗号化データがあれば復号する
+    try { await loadScript('./data.enc.js'); } catch (e) { /* fallthrough */ }
+    if (window.KINDLE_ENC) {
+      try {
+        const obj = await decryptFlow();
+        window.KINDLE_BOOKS = obj.books;
+        window.KINDLE_OVERRIDES = obj.overrides || {};
+        window.KINDLE_SERIES_ORDER = obj.seriesOrder || {};
+        mode = 'enc';
+      } catch (e) { /* fallthrough */ }
+    }
+  }
+  if (!window.KINDLE_BOOKS) {
+    try { await loadScript('./books.sample.js'); mode = 'sample'; } catch (e) { /* noop */ }
+  }
+
+  if (mode === 'plain') {
+    try { await loadScript('./overrides.js'); } catch (e) { /* optional */ }
+    try { await loadScript('./series-order.js'); } catch (e) { /* optional */ }
+  }
+
+  const data = window.KINDLE_BOOKS;
+  if (!data || !Array.isArray(data.items)) {
+    // Android のファイルマネージャ等から開くと content:// URI になり、
+    // 相対パスの books.js 等が権限外で一切読めない。原因を正しく案内する。
+    const badProtocol = !/^(https?:|file:)$/.test(location.protocol);
+    document.getElementById('content').innerHTML = badProtocol
+      ? '<div id="empty-msg"><b>このページは ' + location.protocol + '// で開かれているため、データファイルを読み込めません。</b><br>' +
+        'アプリ内ビューアやファイル共有からの直接オープンでは動作しません。<br>' +
+        'ファイルを file:// で開けるブラウザで開くか、ローカルHTTPサーバー経由で開いてください。<br>' +
+        '詳細は README.md の「別デバイスで使う」を参照。</div>'
+      : '<div id="empty-msg">books.js が見つかりません。<br>' +
+        'read.amazon.co.jp で取得スクリプト（fetch-library.js / ブックマークレット）を実行し、<br>' +
+        'ダウンロードされた books.js をこの HTML と同じフォルダに置いてください。<br>' +
+        '手順の詳細は README.md を参照。</div>';
+    return;
+  }
+
+  ALL_ITEMS = data.items.filter(b => b && b.asin && b.title);
+
+  FILE_OV = normalizeOverrides(window.KINDLE_OVERRIDES);
+  SERIES_ORDER = (typeof window.KINDLE_SERIES_ORDER === 'object' && window.KINDLE_SERIES_ORDER) || {};
+  LOCAL_OV = loadLocalOverrides();
+
+  // overrides.js に反映済みの差分と、対象がファイルから消えた打ち消しマーカーを掃除
+  let cleaned = false;
+  for (const sec of ['series', 'category', 'order']) {
+    for (const [k, v] of Object.entries(LOCAL_OV[sec])) {
+      if ((v === null && !(k in FILE_OV[sec])) || (v !== null && FILE_OV[sec][k] === v)) {
+        delete LOCAL_OV[sec][k];
+        cleaned = true;
+      }
+    }
+  }
+  if (cleaned) saveLocalOverrides(LOCAL_OV);
+
+  // recency 情報が無い旧データでは「最近読んだ順」が意味を持たないので名前順に切替
+  if (!ALL_ITEMS.some(b => b.recencyRank != null) && SORT_MODE === 'recency') {
+    SORT_MODE = 'name';
+  }
+  document.getElementById('sort-select').value = SORT_MODE;
+
+  rebuild(false);
+
+  if (mode === 'sample') {
+    const note = document.createElement('div');
+    note.id = 'edit-hint';
+    note.style.display = 'block';
+    note.textContent = 'サンプルデータを表示中です。README.md の手順で books.js を取得すると自分の蔵書が表示されます。';
+    document.getElementById('content').prepend(note);
+  }
+})();
+</script>
+</body>
+</html>
