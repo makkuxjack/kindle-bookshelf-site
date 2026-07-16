@@ -506,6 +506,7 @@ const CATEGORIES = [
   { id: 'comic', label: '漫画' },
   { id: 'adult', label: '成人向け' },
   { id: 'lightnovel', label: 'ラノベ' },
+  { id: 'litefiction', label: 'ライト文芸' },
   { id: 'bungei', label: '文芸' },
   { id: 'jitsuyo', label: '実用書・その他' },
   { id: 'aozora', label: '青空文庫' },
@@ -535,9 +536,16 @@ const LN_LABELS = [
   'スマッシュ文庫', 'ぽにきゃんBOOKS', 'DREノベルス', 'HJノベルス', 'アルファポリス',
   'ツギクルブックス', 'Mノベルス',
   // 追加分（レーベル辞書の漏れ）
-  'GCノベルズ', 'C★NOVELS', 'HJ NOVELS', 'メディアワークス文庫', 'ベリーズ文庫',
-  'ブレイブ文庫', '一二三文庫', 'LINE文庫', '新潮文庫nex', 'レジーナブックス',
-  'スターツ出版文庫', '一迅社ブックスDF', '角川フォレスタ',
+  'GCノベルズ', 'C★NOVELS', 'HJ NOVELS', 'ブレイブ文庫', '一二三文庫',
+  'レジーナブックス', '一迅社ブックスDF', '角川フォレスタ',
+].map(normLabel);
+
+// ライト文芸のレーベル名。ラノベと一般文芸の中間（メディアワークス文庫・新潮文庫nex 等）。
+// ラノベ判定より先に評価して『ライト文芸』カテゴリへ振り分ける（要望D）。
+const LITE_LABELS = [
+  'メディアワークス文庫', '新潮文庫nex', 'スターツ出版文庫', 'ベリーズ文庫', 'LINE文庫',
+  '富士見L文庫', 'ことのは文庫', '集英社オレンジ文庫', 'ポプラ文庫ピュアフル', 'メゾン文庫',
+  'マイナビ出版ファン文庫', 'ノベマ', 'キャラ文芸',
 ].map(normLabel);
 
 // 成人向けのレーベル名。**明確に成人向け専門のレーベルだけ**に絞る。
@@ -564,6 +572,7 @@ function detectCategory(book) {
   if (/青空文庫/.test(pub) || /青空文庫/.test(title)) return 'aozora';
   if (ADULT_RE.test(title) || ADULT_RE.test(pub) || hasLabel(norm, ADULT_LABELS)) return 'adult';
   if (/\/manga-wr\//.test(String(book.webReaderUrl || ''))) return 'comic';
+  if (hasLabel(norm, LITE_LABELS)) return 'litefiction';
   if (hasLabel(norm, LN_LABELS)) return 'lightnovel';
   if (/新書/.test(title)) return 'jitsuyo';
   if (/文庫/.test(title)) return 'bungei';
@@ -645,9 +654,11 @@ function groupBooks(items, overrides, seriesOrder) {
         const ob = orderIdx.has(b.book.asin) ? orderIdx.get(b.book.asin) : Infinity;
         if (oa !== ob) return oa - ob;
       }
-      if (a.volume != null && b.volume != null && a.volume !== b.volume) return a.volume - b.volume;
-      if (a.volume != null && b.volume == null) return -1;
-      if (a.volume == null && b.volume != null) return 1;
+      // 巻数で並べる。無印(volume=null)は「1作目」とみなして先頭へ（番外編は 5.5 等の数字で正しい位置に入る）。
+      // series-order.js で明示された刊行順があれば上の orderIdx が優先するので、ここは無い場合の近似。
+      const va = a.volume == null ? -Infinity : a.volume;
+      const vb = b.volume == null ? -Infinity : b.volume;
+      if (va !== vb) return va - vb;
       // acquisitionRank は 0 が最新購入。巻数不明どうしは「購入が古い順」（≒読み始めた順）に並べる
       const ra = a.book.acquisitionRank, rb = b.book.acquisitionRank;
       if (ra != null && rb != null && ra !== rb) return rb - ra;
@@ -908,10 +919,12 @@ function seriesCard(group) {
   card.className = 'card';
   card.appendChild(coverEl(rep));
 
-  const badge = document.createElement('span');
-  badge.className = 'count-badge';
-  badge.textContent = `${group.books.length}冊`;
-  card.appendChild(badge);
+  if (group.books.length > 1) {
+    const badge = document.createElement('span');
+    badge.className = 'count-badge';
+    badge.textContent = `${group.books.length}冊`;
+    card.appendChild(badge);
+  }
 
   const label = document.createElement('div');
   label.className = 'card-label';
@@ -973,28 +986,16 @@ function render() {
 
   let visible = GROUPS.filter(g => matchQuery(q, g));
   if (CURRENT_CAT !== 'all') visible = visible.filter(g => g.category === CURRENT_CAT);
-  const series = sortGroups(visible.filter(g => g.books.length >= 2));
-  const singles = sortGroups(visible.filter(g => g.books.length === 1));
+  // 単巻も含めて全作品をシリーズカード（表紙タップで一覧モーダル）で一律表示する（要望B）。
+  const allGroups = sortGroups(visible);
 
-  if (series.length) {
-    const h = document.createElement('h2');
-    h.textContent = `シリーズ（${series.length}）`;
-    content.appendChild(h);
+  if (allGroups.length) {
     const grid = document.createElement('div');
     grid.className = 'grid';
-    for (const g of series) grid.appendChild(seriesCard(g));
+    for (const g of allGroups) grid.appendChild(seriesCard(g));
     content.appendChild(grid);
   }
-  if (singles.length) {
-    const h = document.createElement('h2');
-    h.textContent = `単巻・その他（${singles.length}）`;
-    content.appendChild(h);
-    const grid = document.createElement('div');
-    grid.className = 'grid';
-    for (const g of singles) grid.appendChild(bookCard(g.books[0], { group: g }));
-    content.appendChild(grid);
-  }
-  if (!series.length && !singles.length) {
+  if (!allGroups.length) {
     const d = document.createElement('div');
     d.id = 'empty-msg';
     d.textContent = q ? '該当する本がありません' : '';
