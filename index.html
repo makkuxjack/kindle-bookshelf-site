@@ -368,7 +368,8 @@ const PART_MAP = { '上': 1, '前': 1, '前編': 1, '中': 2, '下': 3, '後': 3
 
 function isVolumeParen(inner) {
   inner = inner.trim();
-  return /^\d+(?:\.\d+)?$/.test(inner) || PART_MAP.hasOwnProperty(inner);
+  // 「1巻」のような "数字＋巻" も巻数とみなす（飾り除去で (1巻) を残し、後段で巻数として拾えるように）
+  return /^\d+(?:\.\d+)?巻?$/.test(inner) || PART_MAP.hasOwnProperty(inner);
 }
 
 function romanToInt(s) {
@@ -423,6 +424,7 @@ function extractSeries(rawTitle) {
   const safeRe = (src) => { try { return new RegExp(src); } catch (e) { return NEVER_MATCH; } };
   const tailPatterns = [
     { re: new RegExp('[（(]\\s*' + NUM + '\\s*[)）]\\s*$'), num: m => parseFloat(m[1]) },      // （３２）
+    { re: new RegExp('[（(]\\s*' + NUM + '\\s*巻\\s*[)）]\\s*$'), num: m => parseFloat(m[1]) }, // (1巻) 琴浦さん型
     { re: new RegExp('【\\s*' + NUM + '\\s*】\\s*$'), num: m => parseFloat(m[1]) },            // 【３２】
     { re: /[（(]\s*(上|中|下|前|後|前編|後編)\s*[)）]\s*$/, num: m => PART_MAP[m[1]] },        // (上)
     { re: new RegExp('第\\s*' + NUM + '\\s*[巻話集]\\s*$'), num: m => parseFloat(m[1]) },      // 第3巻
