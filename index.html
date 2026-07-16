@@ -487,29 +487,59 @@ const CATEGORIES = [
 ];
 const CAT_LABEL = Object.fromEntries(CATEGORIES.map(c => [c.id, c.label]));
 
-const LN_LABEL_RE = new RegExp([
-  '電撃文庫', 'ＭＦ文庫', 'MF文庫', 'ファンタジア文庫', 'スニーカー文庫', 'ガガガ文庫',
-  'ＧＡ文庫', 'GA文庫', 'ＨＪ文庫', 'HJ文庫', 'オーバーラップ文庫', 'ファミ通文庫',
-  '講談社ラノベ文庫', 'ダッシュエックス文庫', 'スーパーダッシュ文庫', '電撃の新文芸',
-  'ビーンズ文庫', 'コバルト文庫', '一迅社文庫', 'このライトノベルがすごい！文庫',
-  'レジェンドノベルス', 'ＧＡノベル', 'GAノベル', 'オーバーラップノベルス', 'モンスター文庫',
-  'ヒーロー文庫', 'カドカワBOOKS', 'カドカワＢＯＯＫＳ', 'MFブックス', 'ＭＦブックス',
-  'アース・スターノベル', 'サーガフォレスト', 'ノクスノベルス', 'PASH!ブックス', 'ＰＡＳＨ！ブックス',
-  '角川スニーカー', 'ソフトバンク文庫', 'スマッシュ文庫', 'ぽにきゃんBOOKS', 'DREノベルス',
-  'ＨＪノベルス', 'HJノベルス', 'アルファポリス', 'ツギクルブックス', 'Mノベルス', 'Ｍノベルス',
-].join('|'));
+// レーベル名の表記ゆれ（全角/半角・スペース・中黒・記号の有無）を吸収してから比較するための正規化。
+// これで「アース・スター ノベル」も「アース・スターノベル」も、「PASH! ブックス」も「PASH!ブックス」も
+// 同じ形になり、括弧内のレーベル名を取りこぼしにくくなる。
+function normLabel(s) {
+  return String(s || '')
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/！/g, '!').replace(/／/g, '/').replace(/？/g, '?')
+    .replace(/[\s　・･★☆]/g, '')
+    .toUpperCase();
+}
 
+// ラノベのレーベル名。正規化(normLabel)して部分一致で判定するので、全角半角・スペースのゆれは自動吸収。
+// 新しいレーベルを見つけたらここに1行足すだけでよい（表記ゆれは気にしなくてよい）。
+const LN_LABELS = [
+  '電撃文庫', 'MF文庫', 'ファンタジア文庫', 'スニーカー文庫', 'ガガガ文庫', 'GA文庫',
+  'HJ文庫', 'オーバーラップ文庫', 'ファミ通文庫', '講談社ラノベ文庫', 'ダッシュエックス文庫',
+  'スーパーダッシュ文庫', '電撃の新文芸', 'ビーンズ文庫', 'コバルト文庫', '一迅社文庫',
+  'このライトノベルがすごい！文庫', 'レジェンドノベルス', 'GAノベル', 'オーバーラップノベルス',
+  'モンスター文庫', 'ヒーロー文庫', 'カドカワBOOKS', 'MFブックス', 'アース・スターノベル',
+  'サーガフォレスト', 'ノクスノベルス', 'PASH!ブックス', '角川スニーカー', 'ソフトバンク文庫',
+  'スマッシュ文庫', 'ぽにきゃんBOOKS', 'DREノベルス', 'HJノベルス', 'アルファポリス',
+  'ツギクルブックス', 'Mノベルス',
+  // 追加分（レーベル辞書の漏れ）
+  'GCノベルズ', 'C★NOVELS', 'HJ NOVELS', 'メディアワークス文庫', 'ベリーズ文庫',
+  'ブレイブ文庫', '一二三文庫', 'LINE文庫', '新潮文庫nex', 'レジーナブックス',
+  'スターツ出版文庫', '一迅社ブックスDF', '角川フォレスタ',
+].map(normLabel);
+
+// 成人向けのレーベル名。**明確に成人向け専門のレーベルだけ**に絞る。
+// 「写真集」「グラビア」などの汎用語は入れない（一般作品まで巻き込むため）。
+const ADULT_LABELS = [
+  '美少女文庫', 'フランス書院', 'オトナ文庫', '二次元ドリーム', 'ワニマガジン',
+  'キルタイムコミュニケーション', 'ぷちぱら文庫', 'GOTコミックス', 'MAXING',
+].map(normLabel);
+
+// タイトル等に「18禁」等が明記されている場合の判定（レーベル名が無い本の保険）
 const ADULT_RE = /成人向け|１８禁|18禁|Ｒ－?１８|R-?18(?![0-9])|アダルト/i;
 
+function hasLabel(normText, labels) {
+  return labels.some(l => l && normText.includes(l));
+}
+
 // 1冊ぶんの自動カテゴリ判定。
-// webReaderUrl の /manga-wr/（Amazonがコミックビューアを割り当てた本）が最も信頼できる漫画シグナル
+// webReaderUrl の /manga-wr/（Amazonがコミックビューアを割り当てた本）が最も信頼できる漫画シグナル。
+// レーベル名の判定は normLabel で表記ゆれを吸収してから行う。
 function detectCategory(book) {
   const title = String(book.title || '');
   const pub = String(book.publisher || (book.publishers && book.publishers[0]) || '');
+  const norm = normLabel(title + ' ' + pub);
   if (/青空文庫/.test(pub) || /青空文庫/.test(title)) return 'aozora';
-  if (ADULT_RE.test(title) || ADULT_RE.test(pub)) return 'adult';
+  if (ADULT_RE.test(title) || ADULT_RE.test(pub) || hasLabel(norm, ADULT_LABELS)) return 'adult';
   if (/\/manga-wr\//.test(String(book.webReaderUrl || ''))) return 'comic';
-  if (LN_LABEL_RE.test(title)) return 'lightnovel';
+  if (hasLabel(norm, LN_LABELS)) return 'lightnovel';
   if (/新書/.test(title)) return 'jitsuyo';
   if (/文庫/.test(title)) return 'bungei';
   return 'jitsuyo';
