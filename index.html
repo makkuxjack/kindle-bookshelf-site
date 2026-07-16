@@ -402,6 +402,18 @@ function extractSeries(rawTitle) {
   t = t.replace(/(.)【([^【】]*)】/g, (m, pre, inner) => isVolumeParen(inner) ? m : pre + ' ')
        .replace(/\s+/g, ' ').trim();
 
+  // シリーズ名がタイトル内に明示/反復されている特殊形式は、巻数推定より先に確定する。
+  //   (a)「…『シリーズ名』シリーズ」= シリーズ名が明記されている。
+  //       例: 青春ブタ野郎はおでかけシスターの夢を見ない 『青春ブタ野郎』シリーズ → 「青春ブタ野郎」
+  //       毎巻サブタイトルが変わり巻数も無いため、この明示名が無いと1冊ずつバラバラになる。
+  const seriesMark = t.match(/『([^『』]+)』\s*シリーズ/);
+  if (seriesMark) return { seriesName: seriesMark[1], volume: null };
+  //   (b)「シリーズ名N！ シリーズ名！」= 巻数付きの語のあとにシリーズ名本体が繰り返される。
+  //       例: とらドラ2！ とらドラ！ → シリーズ名「とらドラ！」・巻2（後半がシリーズ名本体）。
+  //       後半が前半の接頭辞で始まる場合のみ採用し、無関係な「○○3！ △△！」の誤結合を避ける。
+  const echoM = t.match(/^(.+?)(\d+)[！!]\s+(.+?[！!])$/);
+  if (echoM && echoM[3].startsWith(echoM[1])) return { seriesName: echoM[3], volume: parseFloat(echoM[2]) };
+
   // 巻数の抽出: まず末尾パターン（優先順）。数字は 10.5 のような小数巻（番外編）も拾う。
   // lookbehind ((?<=…)) はリテラルで書くと非対応ブラウザでスクリプト全体がパースエラーになるため、
   // 必ず new RegExp + safeRe 経由（非対応環境ではそのパターンだけ無効化される）
@@ -438,6 +450,9 @@ function extractSeries(rawTitle) {
   //   以降のサブタイトルは捨ててシリーズ名だけ残す。素の数字は誤爆しやすいので拾わない）
   if (volume === null) {
     const midPatterns = [
+      new RegExp('level\\.?\\s*' + NUM, 'i'),   // 灰と幻想のグリムガル level.1 サブタイトル
+      new RegExp('Flag\\s*' + NUM, 'i'),        // 男女の友情は成立する？（…） Flag 1. サブタイトル
+      new RegExp('\\s(\\d+)\\.(?=[^0-9．。])'),  // 対魔導学園35試験小隊 10.魔女狩り戦争（数字.の後がサブタイトル。10.5等の小数は除外）
       new RegExp('\\s*[#＃]\\s*' + NUM + '(?=\\s|$)'),
       new RegExp('\\s*[（(]\\s*' + NUM + '\\s*[)）]'),
       new RegExp('\\s*【\\s*' + NUM + '\\s*】'),
@@ -459,6 +474,16 @@ function extractSeries(rawTitle) {
         }
         break;
       }
+    }
+  }
+
+  // ここまでで巻数が取れなければ、山括弧の上中下を保険で拾う（例: タイム・リープ＜下＞ あしたはきのう）。
+  // 「Flag 4. …〈上〉」のように別の巻マーカーを併記する本があるため、山括弧はあえて最後に評価する。
+  if (volume === null) {
+    const bp = t.match(/[＜〈<]\s*(前編|後編|上|中|下|前|後)\s*[＞〉>]/);
+    if (bp) {
+      const rest = (t.slice(0, bp.index) + ' ' + t.slice(bp.index + bp[0].length)).replace(/\s+/g, ' ').trim();
+      if (rest.length > 0) { volume = PART_MAP[bp[1]]; t = rest; }
     }
   }
 
@@ -560,7 +585,13 @@ function groupBooks(items, overrides, seriesOrder) {
     const ex = extractSeries(book.title);
     const manual = overrides.series[book.asin];
     const fromOrder = orderLookup.get(book.asin);
-    let key, name;
+    // 同名でも「漫画版」と「文字版(ラノベ/文芸)」は別シリーズとして扱う。
+    // 例:「声優ラジオのウラオモテ」は電撃文庫版とコミカライズ版があり、まとめると多数決で
+    //    冊数の多い方(ラノベ)に飲まれて他方がそのタブから消える。Amazonが漫画に割り当てる
+    //    /manga-wr/ を媒体シグナルにして分ける。ただし手動まとめ(overrides)・seriesAsin・
+    //    刊行順(series-order)で所属が明示されているものは、その意図を尊重して分けない。
+    const isComic = /\/manga-wr\//.test(String(book.webReaderUrl || ''));
+    let key, name, media = 'x';
     if (manual) {
       key = 'ov:' + manual;
       name = manual;
@@ -571,13 +602,14 @@ function groupBooks(items, overrides, seriesOrder) {
       key = 'sa:' + book.seriesAsin;
       name = null; // 後でメンバーから決める
     } else {
-      key = 'tt:' + ex.seriesName;
+      media = isComic ? 'c' : 'b';
+      key = 'tt:' + ex.seriesName + '|' + media;
       name = ex.seriesName;
     }
     const volume = (book.seriesNumber != null && book.seriesNumber !== '')
       ? Number(book.seriesNumber) : ex.volume;
 
-    if (!groups.has(key)) groups.set(key, { key, name, books: [] });
+    if (!groups.has(key)) groups.set(key, { key, name, media, books: [] });
     groups.get(key).books.push({ book, volume, guessedName: ex.seriesName });
   }
 
@@ -596,9 +628,10 @@ function groupBooks(items, overrides, seriesOrder) {
   // 手動修正で既存シリーズ名を指定した場合の分裂対策）
   const byName = new Map();
   for (const g of groups.values()) {
-    const existing = byName.get(g.name);
+    const nk = g.name + '\0' + (g.media || 'x');  // 同名でも媒体(漫画/文字)が違えば統合しない
+    const existing = byName.get(nk);
     if (existing) existing.books.push(...g.books);
-    else byName.set(g.name, g);
+    else byName.set(nk, g);
   }
 
   const result = [...byName.values()];
