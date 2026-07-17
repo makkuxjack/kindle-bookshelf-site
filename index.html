@@ -636,13 +636,33 @@ function groupBooks(items, overrides, seriesOrder) {
   }
 
   // 同名グループを統合（一部の巻だけ seriesAsin が欠けている場合や、
-  // 手動修正で既存シリーズ名を指定した場合の分裂対策）
+  // 手動修正で既存シリーズ名を指定した場合の分裂対策）。2段階で行う:
+  //  pass1: 自動判定(tt:)グループを media(漫画'c'/文字'b')ごとに確定。
+  //         同名でも媒体が違えば別シリーズのまま（声優ラジオのコミック版/ラノベ版）。
+  //  pass2: 所属を明示したグループ(手動まとめ ov: / 刊行順 so: / seriesAsin sa: = media 'x')を、
+  //         媒体を問わず同名の実媒体グループへ吸収する。これをしないと「1巻だけ手動登録」した本が
+  //         自動グループ(media 'b')と統合キーが食い違い、別カードに割れる（＝同名シリーズが2つ問題）。
+  //         同名の実媒体グループが無ければ x のまま単独で残す（series-order で束ねた青ブタ等）。
   const byName = new Map();
   for (const g of groups.values()) {
-    const nk = g.name + '\0' + (g.media || 'x');  // 同名でも媒体(漫画/文字)が違えば統合しない
+    if (g.media === 'x') continue;
+    const nk = g.name + '\0' + g.media;
     const existing = byName.get(nk);
     if (existing) existing.books.push(...g.books);
     else byName.set(nk, g);
+  }
+  for (const g of groups.values()) {
+    if (g.media !== 'x') continue;
+    const sameName = [...byName.values()].filter(x => x.name === g.name);
+    if (sameName.length) {
+      sameName.sort((a, b) => b.books.length - a.books.length); // 冊数が最大の同名グループへ寄せる
+      sameName[0].books.push(...g.books);
+    } else {
+      const nk = g.name + '\0x';
+      const existing = byName.get(nk);
+      if (existing) existing.books.push(...g.books);
+      else byName.set(nk, g);
+    }
   }
 
   const result = [...byName.values()];
