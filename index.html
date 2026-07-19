@@ -250,6 +250,84 @@
     background: var(--card);
     color: var(--text);
   }
+  /* 巻の並び替え（シリーズ一覧の編集モード） */
+  .order-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .order-btn {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px; /* iPad で指の腹でも押せる大きさを確保する */
+    padding: 0;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--accent);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .order-btn:disabled { opacity: .3; cursor: default; }
+  .order-num {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 34px;
+    padding: 2px 4px;
+    text-align: center;
+    /* iPad は入力欄の文字が16px未満だと、触れた瞬間に画面を勝手に拡大する。それを避けるため16px */
+    font-size: 16px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--text);
+  }
+  .order-of { flex: 0 0 auto; font-size: 10px; color: var(--text-sub); }
+  .order-reset { font-size: 11px; padding: 3px 8px; }
+  /* 編集モードのカテゴリ管理ボタン。ふつうのタブと見分けがつくように破線にする */
+  .cat-admin { border-style: dashed; }
+  .cat-danger { color: #c0392b; border-color: #c0392b; }
+  /* カテゴリの追加・改名・削除はページの中で入力する。
+     ブラウザの入力ダイアログ(prompt)は「ホーム画面に追加」した iPad で出ないことがあるため使わない。 */
+  #cat-edit-panel {
+    display: none;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: var(--card);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+  }
+  .cat-panel-msg { font-size: 13px; }
+  .cat-panel-input {
+    flex: 1 1 180px;
+    min-width: 0;
+    height: 38px;
+    padding: 4px 10px;
+    font-size: 16px; /* 16px未満だと iPad が入力時に勝手に拡大する */
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .cat-panel-btn {
+    flex: 0 0 auto;
+    height: 38px;
+    padding: 0 14px;
+    font-size: 13px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .cat-panel-btn.primary { background: var(--accent); color: #fff; }
+  .cat-panel-btn.danger { color: #c0392b; border-color: #c0392b; }
+  .cat-panel-err { flex-basis: 100%; font-size: 12px; color: #c0392b; }
   #empty-msg {
     text-align: center;
     padding: 60px 20px;
@@ -282,9 +360,10 @@
     <button class="btn" id="export-overrides" title="手動修正を overrides.js として保存（リポジトリに置くと他デバイスにも反映）">修正を書き出す</button>
   </div>
   <div id="cat-tabs"></div>
+  <div id="cat-edit-panel"></div>
 </header>
 <main>
-  <div id="edit-hint">編集モード: 各巻の入力欄にシリーズ名を、セレクトにカテゴリを指定できます（空欄/「自動」に戻すと自動判定に戻る）。修正はこのブラウザに保存されます。「修正を書き出す」で overrides.js を保存し、リポジトリに置くと他のデバイスにも反映されます。</div>
+  <div id="edit-hint">編集モード: 各巻の入力欄にシリーズ名を、セレクトにカテゴリを指定できます（空欄/「自動」に戻すと自動判定に戻る）。シリーズの表紙を開くと、各巻に ▲▼ と番号欄が出て読む順に並べ替えられます（巻数表記が無いシリーズや、複数をまとめたシリーズ向け）。カテゴリはタブ右端の「＋ カテゴリを作る」で自分の分類を追加できます。修正はこのブラウザに保存されます。「修正を書き出す」で overrides.js を保存し、リポジトリに置くと他のデバイスにも反映されます。</div>
   <div id="content"></div>
 </main>
 
@@ -295,6 +374,7 @@
     <div id="modal-sub">
       <span id="modal-info"></span>
       <label>カテゴリ: <select id="modal-cat"></select></label>
+      <span id="modal-order-reset"></span>
     </div>
     <div class="grid" id="modal-grid"></div>
   </div>
@@ -332,18 +412,35 @@ const SORT_KEY = 'kindle-bookshelf-sort';
 const CAT_KEY = 'kindle-bookshelf-cat';
 const RECENT_KEY = 'kindle-bookshelf-recent';
 
-// overrides は { series: {asin: シリーズ名}, category: {シリーズ名: カテゴリid}, order: {シリーズ名: [asin,...]} }。
-// 旧形式（フラットな asin→シリーズ名）も読めるように正規化する
+// overrides の中身:
+//   series     {asin: シリーズ名}          この本をこのシリーズに入れる
+//   category   {シリーズ名: カテゴリid}     このシリーズをこのカテゴリに入れる
+//   order      {シリーズ名: [asin,...]}    このシリーズの巻をこの順に並べる
+//   categories {カテゴリid: 表示名}         ユーザーが自分で足したカテゴリ
+// 4つとも「キー→値」のマップに揃えてある。categories だけリストにすると差分方式（下記）に乗らないため。
+const OV_SECTIONS = ['series', 'category', 'order', 'categories'];
+function emptyOverrides() {
+  return { series: {}, category: {}, order: {}, categories: {} };
+}
+
+// 値が等しいかの判定。order は配列なので同じ中身でも別物として作られる（=== では常に不一致になる）。
+// ここを === のままにすると「overrides.js に書き出し済みなのに未書き出し扱いが消えない」が起きる。
+function sameOverrideValue(a, b) {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  if (typeof a !== 'object' && typeof b !== 'object') return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// 旧形式（フラットな asin→シリーズ名）も、categories が無い旧 overrides.js も読めるように正規化する
 function normalizeOverrides(raw) {
-  if (!raw || typeof raw !== 'object') return { series: {}, category: {}, order: {} };
-  if (raw.series || raw.category || raw.order) {
-    return {
-      series: Object.assign({}, raw.series || {}),
-      category: Object.assign({}, raw.category || {}),
-      order: Object.assign({}, raw.order || {}),
-    };
+  if (!raw || typeof raw !== 'object') return emptyOverrides();
+  if (raw.series || raw.category || raw.order || raw.categories) {
+    const out = emptyOverrides();
+    for (const sec of OV_SECTIONS) Object.assign(out[sec], raw[sec] || {});
+    return out;
   }
-  return { series: Object.assign({}, raw), category: {}, order: {} };
+  return Object.assign(emptyOverrides(), { series: Object.assign({}, raw) });
 }
 
 // localStorage には overrides.js（ファイル）との「差分」だけを保存する。
@@ -351,7 +448,7 @@ function normalizeOverrides(raw) {
 // マージ済み全体を保存するとファイル側の後日の更新が反映されなくなるため、この形を崩さないこと。
 function loadLocalOverrides() {
   try { return normalizeOverrides(JSON.parse(localStorage.getItem(OVERRIDES_KEY) || '{}')); }
-  catch (e) { return { series: {}, category: {}, order: {} }; }
+  catch (e) { return emptyOverrides(); }
 }
 function saveLocalOverrides(ov) {
   localStorage.setItem(OVERRIDES_KEY, JSON.stringify(ov));
@@ -536,6 +633,38 @@ const CATEGORIES = [
 ];
 const CAT_LABEL = Object.fromEntries(CATEGORIES.map(c => [c.id, c.label]));
 
+/* ---------- ユーザーが足したカテゴリ ----------
+   上の CATEGORIES（自動判定が使う固定7件）の配列そのものは docs/measure.js が名前で切り出して
+   数えているため、形を変えずに残す。足したカテゴリは overrides.categories に持ち、表示のときだけ合成する。*/
+function allCategories() {
+  const extra = [];
+  for (const [id, label] of Object.entries((OVERRIDES && OVERRIDES.categories) || {})) {
+    if (label && !RESERVED_CAT_IDS.has(id)) extra.push({ id, label: String(label) });
+  }
+  return CATEGORIES.concat(extra);
+}
+function catLabel(id) {
+  const found = allCategories().find(c => c.id === id);
+  return found ? found.label : (CAT_LABEL[id] || id);
+}
+function isUserCategory(id) {
+  return typeof id === 'string' && id.indexOf('user:') === 0;
+}
+// 固定カテゴリのid・タブの「すべて」・プロトタイプ汚染の元になるキーは使わせない
+const RESERVED_CAT_IDS = new Set(
+  ['all', '__proto__', 'constructor', 'prototype'].concat(CATEGORIES.map(c => c.id))
+);
+// 表示名から重複しないIDを作る。表示名は後から変えられるので、IDは作った時点のもので固定する。
+function newCategoryId(label) {
+  const slug = String(label).trim().replace(/\s+/g, '-').slice(0, 24) || 'cat';
+  let id = 'user:' + slug;
+  let n = 2;
+  while (RESERVED_CAT_IDS.has(id) || ((OVERRIDES.categories || {})[id] != null)) {
+    id = 'user:' + slug + '-' + (n++);
+  }
+  return id;
+}
+
 // レーベル名の表記ゆれ（全角/半角・スペース・中黒・記号の有無）を吸収してから比較するための正規化。
 // これで「アース・スター ノベル」も「アース・スターノベル」も、「PASH! ブックス」も「PASH!ブックス」も
 // 同じ形になり、括弧内のレーベル名を取りこぼしにくくなる。
@@ -603,7 +732,8 @@ function detectCategory(book) {
 }
 
 /* ---------- グルーピング ---------- */
-function groupBooks(items, overrides, seriesOrder) {
+// validCats は「今ある全カテゴリのid」。渡さない呼び出し（docs/measure.js）では従来どおり素通しする。
+function groupBooks(items, overrides, seriesOrder, validCats) {
   const groups = new Map(); // key -> { key, name, books: [{book, volume}] }
 
   // series-order.js（Webで調べた正式刊行順）は「巻順」だけでなく「シリーズへの所属」も解決する。
@@ -689,7 +819,10 @@ function groupBooks(items, overrides, seriesOrder) {
   const result = [...byName.values()];
   for (const g of result) {
     // 巻の並び: 明示的な刊行順 (overrides.order / series-order.js) > 巻番号 > 購入が古い順 > タイトル順
-    const orderArr = overrides.order[g.name] || (seriesOrder || {})[g.name];
+    // 空配列は「指定なし」として扱う。空配列を有効な指定と見なすと、
+    // series-order.js に書いてある正式な刊行順まで打ち消してしまう。
+    let orderArr = overrides.order[g.name];
+    if (!orderArr || !orderArr.length) orderArr = (seriesOrder || {})[g.name];
     const orderIdx = orderArr ? new Map(orderArr.map((asin, i) => [asin, i])) : null;
     g.books.sort((a, b) => {
       if (orderIdx) {
@@ -717,7 +850,11 @@ function groupBooks(items, overrides, seriesOrder) {
     let best = 'jitsuyo', bestN = -1;
     for (const [c, n] of freq) if (n > bestN) { best = c; bestN = n; }
     g.autoCategory = best;
-    g.category = overrides.category[g.name] || best;
+    // 消したカテゴリへの割り当てが残っていることがある（別の端末で消した場合など）。
+    // 実在しないカテゴリidをそのまま採用すると、そのシリーズはどのタブにも出てこない迷子になるので、
+    // 実在しないときは自動判定に落とす。
+    const wantCat = overrides.category[g.name];
+    g.category = (wantCat && (!validCats || validCats.has(wantCat))) ? wantCat : best;
 
     // 最近読んだ度（グループ内で最も最近の recencyRank。0が最も最近）
     let rec = Infinity;
@@ -815,19 +952,27 @@ async function decryptFlow() {
 
 /* ---------- 描画 ---------- */
 let ALL_ITEMS = [];
-let FILE_OV = { series: {}, category: {}, order: {} };  // overrides.js 由来（このセッション中は読み取り専用）
-let LOCAL_OV = { series: {}, category: {}, order: {} }; // localStorage の差分（null = ファイル値の打ち消し）
-let OVERRIDES = { series: {}, category: {}, order: {} };
+let FILE_OV = emptyOverrides();  // overrides.js 由来（このセッション中は読み取り専用）
+let LOCAL_OV = emptyOverrides(); // localStorage の差分（null = ファイル値の打ち消し）
+let OVERRIDES = emptyOverrides();
 let SERIES_ORDER = {}; // series-order.js 由来（Webで調べた正式刊行順）
 let GROUPS = [];
 let EDITING = false;
 let CURRENT_GROUP_NAME = null;
+// 同じ名前のグループ（漫画版/文字版）があるため、開いているモーダルを名前だけでは特定できない。
+// key を第一候補、代表の本の asin を保険として持つ（key は編集操作で変わることがある）。
+let CURRENT_GROUP_KEY = null;
+let CURRENT_GROUP_ASIN = null;
 let SORT_MODE = localStorage.getItem(SORT_KEY) || 'recency';
 let CURRENT_CAT = localStorage.getItem(CAT_KEY) || 'all';
+// カテゴリの追加・改名・削除は、ブラウザの入力ダイアログ(prompt/confirm)ではなくページ内で行う。
+// ホーム画面に追加した iPad ではダイアログが出ないことがあり、操作できなくなるため。
+let CAT_EDIT_MODE = null;   // null / 'add' / 'rename' / 'delete'
+let CAT_EDIT_ERROR = '';
 
 function computeOverrides() {
   const out = {};
-  for (const sec of ['series', 'category', 'order']) {
+  for (const sec of OV_SECTIONS) {
     const merged = Object.assign({}, FILE_OV[sec]);
     for (const [k, v] of Object.entries(LOCAL_OV[sec])) {
       if (v === null) delete merged[k];
@@ -838,11 +983,12 @@ function computeOverrides() {
   return out;
 }
 
-// 差分方式でローカル修正を記録する（value が空文字なら「自動判定に戻す」）
+// 差分方式でローカル修正を記録する（value が空文字・空配列なら「自動判定に戻す」）
 function applyLocalOverride(section, key, value) {
   const fileVal = FILE_OV[section][key];
-  if (value) {
-    if (fileVal === value) delete LOCAL_OV[section][key];
+  const hasValue = Array.isArray(value) ? value.length > 0 : !!value;
+  if (hasValue) {
+    if (sameOverrideValue(fileVal, value)) delete LOCAL_OV[section][key];
     else LOCAL_OV[section][key] = value;
   } else {
     if (fileVal != null) LOCAL_OV[section][key] = null;
@@ -875,9 +1021,9 @@ function catSelectEl(group, className) {
   sel.className = className || '';
   const auto = document.createElement('option');
   auto.value = '';
-  auto.textContent = '自動（' + (CAT_LABEL[group.autoCategory] || group.autoCategory) + '）';
+  auto.textContent = '自動（' + catLabel(group.autoCategory) + '）';
   sel.appendChild(auto);
-  for (const c of CATEGORIES) {
+  for (const c of allCategories()) {
     const o = document.createElement('option');
     o.value = c.id;
     o.textContent = c.label;
@@ -890,6 +1036,75 @@ function catSelectEl(group, className) {
     rebuild(true);
   });
   return sel;
+}
+
+/* ---------- 巻の並び替え ----------
+   巻数表記が無いシリーズや、複数のシリーズを手で1つにまとめたときは、自動判定では読む順にならない。
+   （例: ひぐらしの8編をまとめると、各編の1巻が全部先に来てしまう）
+   ここで決めた順番は overrides.order に「asin を並べた配列」として入る。読む側は groupBooks が対応済み。*/
+function moveBookTo(group, asin, toIndex) {
+  const own = group.books.map(b => b.book.asin);
+  const from = own.indexOf(asin);
+  if (from < 0) return;
+  const to = Math.max(0, Math.min(own.length - 1, toIndex));
+  if (to === from) return;
+  own.splice(from, 1);
+  own.splice(to, 0, asin);
+  // 同じ名前で漫画版と文字版に分かれているシリーズ（封神演義・ヒル等）は、この保存場所を共有する。
+  // 自分のグループの巻だけで丸ごと上書きすると、相手側で付けた並び順が黙って消える。
+  // 並び順は「どちらが先か」しか見ないので、1つの配列に両方の巻が混ざっていても正しく動く。
+  const mine = new Set(own);
+  const prev = OVERRIDES.order[group.name] || SERIES_ORDER[group.name] || [];
+  applyLocalOverride('order', group.name, prev.filter(a => !mine.has(a)).concat(own));
+  rebuild(true);
+}
+
+function orderRowEl(group, asin) {
+  const idx = group.books.findIndex(b => b.book.asin === asin);
+  const total = group.books.length;
+  const row = document.createElement('div');
+  row.className = 'order-row';
+  // カード全体が「タップで本を開く」ハンドラを持っているので、この行の操作は必ず止める
+  row.addEventListener('click', e => e.stopPropagation());
+
+  const up = document.createElement('button');
+  up.className = 'order-btn';
+  up.textContent = '▲';
+  up.title = '1つ前へ';
+  up.setAttribute('aria-label', '1つ前へ移動');
+  up.disabled = idx <= 0;
+  up.addEventListener('click', e => { e.stopPropagation(); moveBookTo(group, asin, idx - 1); });
+
+  const num = document.createElement('input');
+  num.className = 'order-num';
+  num.type = 'number';
+  num.min = '1';
+  num.max = String(total);
+  num.value = String(idx + 1);
+  num.title = 'このシリーズの何冊目か（数字を入れるとその位置へ動きます）';
+  num.setAttribute('aria-label', 'このシリーズの何冊目か');
+  num.addEventListener('click', e => e.stopPropagation());
+  num.addEventListener('change', e => {
+    e.stopPropagation();
+    const v = parseInt(num.value, 10);
+    if (isNaN(v)) { num.value = String(idx + 1); return; }
+    moveBookTo(group, asin, v - 1);
+  });
+
+  const of = document.createElement('span');
+  of.className = 'order-of';
+  of.textContent = '/ ' + total;
+
+  const down = document.createElement('button');
+  down.className = 'order-btn';
+  down.textContent = '▼';
+  down.title = '1つ後ろへ';
+  down.setAttribute('aria-label', '1つ後ろへ移動');
+  down.disabled = idx >= total - 1;
+  down.addEventListener('click', e => { e.stopPropagation(); moveBookTo(group, asin, idx + 1); });
+
+  row.append(up, num, of, down);
+  return row;
 }
 
 function bookCard(entry, opts) {
@@ -947,6 +1162,11 @@ function bookCard(entry, opts) {
     if (opts && opts.group && !(opts && opts.keepModal)) {
       // 単巻カードにはカテゴリ変更セレクトも出す（シリーズはモーダル側で変更）
       card.appendChild(catSelectEl(opts.group, 'edit-select'));
+    }
+    // シリーズ一覧（モーダル）の中でだけ、巻の順番を動かせるようにする。
+    // 1冊しかないシリーズには並べ替えるものが無いので出さない。
+    if (opts && opts.group && opts.keepModal && opts.group.books.length > 1) {
+      card.appendChild(orderRowEl(opts.group, book.asin));
     }
   }
 
@@ -1029,14 +1249,30 @@ function sortGroups(list) {
   return sorted;
 }
 
+// 自分で足したカテゴリを消す。そのカテゴリに入れていたシリーズは自動判定に戻す
+// （戻さないと、どのタブにも出てこない迷子のシリーズができてしまう）。
+function deleteUserCategory(id) {
+  for (const [name, cid] of Object.entries(OVERRIDES.category)) {
+    if (cid === id) applyLocalOverride('category', name, '');
+  }
+  applyLocalOverride('categories', id, '');
+  if (CURRENT_CAT === id) {
+    CURRENT_CAT = 'all';
+    localStorage.setItem(CAT_KEY, CURRENT_CAT);
+  }
+  rebuild(false);
+}
+
 function renderTabs() {
   const bar = document.getElementById('cat-tabs');
   bar.innerHTML = '';
   const counts = new Map();
   for (const g of GROUPS) counts.set(g.category, (counts.get(g.category) || 0) + g.books.length);
   const tabs = [{ id: 'all', label: 'すべて', count: ALL_ITEMS.length }];
-  for (const c of CATEGORIES) {
-    if (counts.has(c.id)) tabs.push({ id: c.id, label: c.label, count: counts.get(c.id) });
+  for (const c of allCategories()) {
+    const n = counts.get(c.id) || 0;
+    // 自分で足したカテゴリは、まだ1冊も入れていなくてもタブに出す（作ったのに見えないと分からない）
+    if (n > 0 || isUserCategory(c.id)) tabs.push({ id: c.id, label: c.label, count: n });
   }
   if (!tabs.some(t => t.id === CURRENT_CAT)) CURRENT_CAT = 'all';
   for (const t of tabs) {
@@ -1049,6 +1285,124 @@ function renderTabs() {
       render();
     });
     bar.appendChild(btn);
+  }
+
+  if (!EDITING) { CAT_EDIT_MODE = null; renderCatPanel(); return; }
+
+  // ここから下は編集モードのときだけ出るカテゴリ管理ボタン。
+  // ボタンは「パネルを開く」だけで、実際の入力はページ内のパネルで行う。
+  const openPanel = (mode) => { CAT_EDIT_MODE = mode; CAT_EDIT_ERROR = ''; renderCatPanel(true); };
+
+  const add = document.createElement('button');
+  add.className = 'cat-tab cat-admin';
+  add.textContent = '＋ カテゴリを作る';
+  add.addEventListener('click', () => openPanel('add'));
+  bar.appendChild(add);
+
+  // 選んでいるのが自分で作ったカテゴリなら、名前変更と削除も出す
+  if (isUserCategory(CURRENT_CAT) && OVERRIDES.categories[CURRENT_CAT]) {
+    const cur = OVERRIDES.categories[CURRENT_CAT];
+
+    const ren = document.createElement('button');
+    ren.className = 'cat-tab cat-admin';
+    ren.textContent = '✎ 「' + cur + '」の名前を変える';
+    ren.addEventListener('click', () => openPanel('rename'));
+    bar.appendChild(ren);
+
+    const del = document.createElement('button');
+    del.className = 'cat-tab cat-admin cat-danger';
+    del.textContent = '✕ 「' + cur + '」を消す';
+    del.addEventListener('click', () => openPanel('delete'));
+    bar.appendChild(del);
+  }
+  renderCatPanel();
+}
+
+// カテゴリの追加・改名・削除をページ内で完結させるパネル。
+// window.prompt / confirm は「ホーム画面に追加」した iPad で出ないことがあり、
+// 出なければ操作が一切できなくなるので使わない。
+function renderCatPanel(focusInput) {
+  const panel = document.getElementById('cat-edit-panel');
+  panel.innerHTML = '';
+  if (!EDITING || !CAT_EDIT_MODE) { panel.style.display = 'none'; return; }
+  panel.style.display = 'flex';
+
+  const closePanel = () => { CAT_EDIT_MODE = null; CAT_EDIT_ERROR = ''; renderCatPanel(); };
+  const mkBtn = (text, cls, fn) => {
+    const b = document.createElement('button');
+    b.className = 'cat-panel-btn' + (cls ? ' ' + cls : '');
+    b.textContent = text;
+    b.addEventListener('click', fn);
+    return b;
+  };
+  const msg = document.createElement('span');
+  msg.className = 'cat-panel-msg';
+
+  if (CAT_EDIT_MODE === 'delete') {
+    const cur = OVERRIDES.categories[CURRENT_CAT] || '';
+    const n = Object.values(OVERRIDES.category).filter(c => c === CURRENT_CAT).length;
+    msg.textContent = '「' + cur + '」を消しますか？' +
+      (n ? '（入れていた' + n + '件のシリーズは自動判定に戻ります）' : '');
+    panel.appendChild(msg);
+    panel.appendChild(mkBtn('消す', 'danger', () => {
+      const id = CURRENT_CAT;
+      CAT_EDIT_MODE = null;
+      deleteUserCategory(id);
+    }));
+    panel.appendChild(mkBtn('やめる', '', closePanel));
+    return;
+  }
+
+  const isRename = CAT_EDIT_MODE === 'rename';
+  const cur = isRename ? (OVERRIDES.categories[CURRENT_CAT] || '') : '';
+  msg.textContent = isRename ? '新しい名前:' : 'カテゴリ名:';
+  panel.appendChild(msg);
+
+  const input = document.createElement('input');
+  input.className = 'cat-panel-input';
+  input.type = 'text';
+  input.placeholder = '例: 積読、お気に入り';
+  input.value = cur;
+  panel.appendChild(input);
+
+  const commit = () => {
+    const label = input.value.trim();
+    if (!label) { CAT_EDIT_ERROR = '名前を入力してください'; renderCatPanel(true); return; }
+    if (label !== cur && allCategories().some(c => c.label === label)) {
+      CAT_EDIT_ERROR = '「' + label + '」は既にあります';
+      renderCatPanel(true);
+      return;
+    }
+    if (isRename) {
+      if (label !== cur) applyLocalOverride('categories', CURRENT_CAT, label);
+    } else {
+      const id = newCategoryId(label);
+      applyLocalOverride('categories', id, label);
+      CURRENT_CAT = id;
+      localStorage.setItem(CAT_KEY, CURRENT_CAT);
+    }
+    CAT_EDIT_MODE = null;
+    CAT_EDIT_ERROR = '';
+    rebuild(false);
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') closePanel();
+  });
+
+  panel.appendChild(mkBtn(isRename ? '変える' : '作る', 'primary', commit));
+  panel.appendChild(mkBtn('やめる', '', closePanel));
+
+  if (CAT_EDIT_ERROR) {
+    const err = document.createElement('div');
+    err.className = 'cat-panel-err';
+    err.textContent = CAT_EDIT_ERROR;
+    panel.appendChild(err);
+  }
+  // iPad でキーボードを出すため、パネルを開いた直後に入力欄へフォーカスする
+  if (focusInput) {
+    input.focus();
+    if (isRename) input.select();
   }
 }
 
@@ -1079,7 +1433,7 @@ function render() {
   const meta = window.KINDLE_BOOKS || {};
   const dt = meta.exportedAt ? new Date(meta.exportedAt) : null;
   // 未書き出しのローカル修正件数（localStorage は消えることがあるので書き出しを促す）
-  const pending = ['series', 'category', 'order']
+  const pending = OV_SECTIONS
     .reduce((n, sec) => n + Object.keys(LOCAL_OV[sec]).length, 0);
   document.getElementById('stats').textContent =
     `${ALL_ITEMS.length}冊 / ${GROUPS.length}グループ` +
@@ -1093,6 +1447,8 @@ function openModal(key) {
   // key は編集操作で変わり得る（同名グループ統合の先勝ちで ov:/sa:/tt: が入れ替わる）ため
   // rebuild 後の追跡は名前で行う
   CURRENT_GROUP_NAME = group.name;
+  CURRENT_GROUP_KEY = group.key;
+  CURRENT_GROUP_ASIN = group.books[0].book.asin;
   document.getElementById('modal-title').textContent = group.name;
   document.getElementById('modal-info').textContent =
     `${group.books.length}冊 ・ ${formatAuthors(group.books[0].book.authors)}`;
@@ -1100,6 +1456,24 @@ function openModal(key) {
   const newSel = catSelectEl(group);
   newSel.id = 'modal-cat';
   catWrap.replaceWith(newSel);
+  // 「自動に戻す」は、このシリーズの巻が実際に並べ替えられているときだけ出す。
+  // 同じ名前の別グループ（漫画版/文字版）が並べ替えただけで出してしまうと、
+  // 押した人にはまったく身に覚えのないまま相手側の並び順が消える。
+  const resetWrap = document.getElementById('modal-order-reset');
+  resetWrap.innerHTML = '';
+  const savedOrder = OVERRIDES.order[group.name];
+  const mineAsins = new Set(group.books.map(b => b.book.asin));
+  if (EDITING && savedOrder && savedOrder.some(a => mineAsins.has(a))) {
+    const reset = document.createElement('button');
+    reset.className = 'btn order-reset';
+    reset.textContent = '順番を自動に戻す';
+    reset.addEventListener('click', () => {
+      // 同じ名前の別グループぶんは残す。残りが無くなれば applyLocalOverride が自動判定へ戻す
+      applyLocalOverride('order', group.name, savedOrder.filter(a => !mineAsins.has(a)));
+      rebuild(true);
+    });
+    resetWrap.appendChild(reset);
+  }
   const grid = document.getElementById('modal-grid');
   grid.innerHTML = '';
   for (const entry of group.books) grid.appendChild(bookCard(entry, { keepModal: true, group }));
@@ -1108,13 +1482,18 @@ function openModal(key) {
 }
 function closeModal() {
   CURRENT_GROUP_NAME = null;
+  CURRENT_GROUP_KEY = null;
+  CURRENT_GROUP_ASIN = null;
   document.getElementById('modal').classList.remove('open');
   document.body.classList.remove('modal-open');
 }
 
 function rebuild(keepModal) {
+  // 並べ替えるたびにモーダルを作り直すので、スクロール位置を覚えておかないと毎回先頭へ飛ぶ
+  const modalEl = document.getElementById('modal');
+  const keptScroll = keepModal ? modalEl.scrollTop : 0;
   OVERRIDES = computeOverrides();
-  GROUPS = groupBooks(ALL_ITEMS, OVERRIDES, SERIES_ORDER);
+  GROUPS = groupBooks(ALL_ITEMS, OVERRIDES, SERIES_ORDER, new Set(allCategories().map(c => c.id)));
   // datalist（編集用のシリーズ名候補）はグループ構成が変わったときだけ作り直す
   const dl = document.getElementById('series-names');
   dl.innerHTML = '';
@@ -1125,8 +1504,15 @@ function rebuild(keepModal) {
   }
   render();
   if (keepModal && CURRENT_GROUP_NAME) {
-    const still = GROUPS.find(g => g.name === CURRENT_GROUP_NAME);
-    if (still) openModal(still.key); else closeModal();
+    // 名前だけで探すと、同じ名前のグループがあるときに別のグループを開いてしまう。
+    // key → 代表の本 → 名前 の順に、確かなものから探す。
+    const still = GROUPS.find(g => g.key === CURRENT_GROUP_KEY)
+      || GROUPS.find(g => g.books.some(b => b.book.asin === CURRENT_GROUP_ASIN))
+      || GROUPS.find(g => g.name === CURRENT_GROUP_NAME);
+    if (still) {
+      openModal(still.key);
+      modalEl.scrollTop = keptScroll;
+    } else closeModal();
   } else {
     closeModal();
   }
@@ -1161,7 +1547,9 @@ document.getElementById('edit-toggle').addEventListener('click', function () {
 document.getElementById('export-overrides').addEventListener('click', () => {
   // category/order は「現存するグループ名」のキーだけ出力する（改名で孤立したゴミを持ち越さない）
   const names = new Set(GROUPS.map(g => g.name));
-  const cleaned = { series: OVERRIDES.series, category: {}, order: {} };
+  // categories のキーはカテゴリIDでグループ名ではないので、この掃除に巻き込むと消えてしまう。
+  // series と同じくそのまま出す。
+  const cleaned = { series: OVERRIDES.series, category: {}, order: {}, categories: OVERRIDES.categories };
   for (const sec of ['category', 'order']) {
     for (const [k, v] of Object.entries(OVERRIDES[sec])) {
       if (names.has(k)) cleaned[sec][k] = v;
@@ -1241,9 +1629,9 @@ document.getElementById('export-overrides').addEventListener('click', () => {
 
   // overrides.js に反映済みの差分と、対象がファイルから消えた打ち消しマーカーを掃除
   let cleaned = false;
-  for (const sec of ['series', 'category', 'order']) {
+  for (const sec of OV_SECTIONS) {
     for (const [k, v] of Object.entries(LOCAL_OV[sec])) {
-      if ((v === null && !(k in FILE_OV[sec])) || (v !== null && FILE_OV[sec][k] === v)) {
+      if ((v === null && !(k in FILE_OV[sec])) || (v !== null && sameOverrideValue(FILE_OV[sec][k], v))) {
         delete LOCAL_OV[sec][k];
         cleaned = true;
       }
