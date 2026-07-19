@@ -275,7 +275,7 @@
     <input id="search" type="search" placeholder="シリーズ名・タイトル・著者で検索">
     <span id="stats"></span>
     <select id="sort-select" class="btn" title="シリーズの並び順">
-      <option value="recency">最近読んだ順</option>
+      <option value="recency" title="この端末で本を開いた履歴が新しい順（履歴が無いうちは50音順と同じ並び）">最近読んだ順</option>
       <option value="name">50音順</option>
     </select>
     <button class="btn" id="edit-toggle">シリーズ編集</button>
@@ -330,6 +330,7 @@ const OVERRIDES_KEY = 'kindle-bookshelf-overrides';
 const PASS_KEY = 'kindle-bookshelf-pass';
 const SORT_KEY = 'kindle-bookshelf-sort';
 const CAT_KEY = 'kindle-bookshelf-cat';
+const RECENT_KEY = 'kindle-bookshelf-recent';
 
 // overrides は { series: {asin: シリーズ名}, category: {シリーズ名: カテゴリid}, order: {シリーズ名: [asin,...]} }。
 // 旧形式（フラットな asin→シリーズ名）も読めるように正規化する
@@ -354,6 +355,26 @@ function loadLocalOverrides() {
 }
 function saveLocalOverrides(ov) {
   localStorage.setItem(OVERRIDES_KEY, JSON.stringify(ov));
+}
+
+/* ---------- 閲覧ログ（「最近読んだ」タブ用） ----------
+   Amazon の recencyRank（取得データに無い/信頼できない）に依存せず、このブラウザで実際に
+   開いた本を記録する。{asin, ts} を新しい順で最大 RECENT_MAX 件のリングバッファに保持し、
+   同じ本を再度開いたら重複を除いて先頭へ。表示側は asin から現在の所属グループを引く（改名・再編に強い）。*/
+const RECENT_MAX = 100;
+function loadRecent() {
+  try {
+    const a = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+    return Array.isArray(a) ? a.filter(e => e && e.asin) : [];
+  } catch (e) { return []; }
+}
+function pushRecent(asin, now) {
+  if (!asin) return;
+  const ts = now || Date.now();
+  const list = loadRecent().filter(e => e.asin !== asin);
+  list.unshift({ asin, ts });
+  if (list.length > RECENT_MAX) list.length = RECENT_MAX;
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch (e) { /* 容量超過等は無視 */ }
 }
 
 /* ---------- タイトル正規化・シリーズ推定 ---------- */
@@ -930,7 +951,13 @@ function bookCard(entry, opts) {
   }
 
   card.addEventListener('click', () => {
+    // 先に開く。記録や再描画を挟むと、iPad Safari がユーザー操作起点と見なさずポップアップを止めることがある
     window.open(readerUrl(book), '_blank', 'noopener');
+    pushRecent(book.asin); // 実際に開いた本を「最近読んだ」として記録する
+    // 開いた直後に並びへ反映（モーダルは別要素なので開いたまま）。
+    // 編集モード中は再描画しない: 入力欄ごとカードを作り直すことになり、編集作業の邪魔になる。
+    // この場合も記録自体は済んでいるので、次の描画で並びに反映される。
+    if (SORT_MODE === 'recency' && !EDITING) render();
   });
   return card;
 }
@@ -967,10 +994,35 @@ function matchQuery(q, group) {
   return group.searchText.includes(normalizeTitle(q).toLowerCase());
 }
 
+// 「最近読んだ順」の順位づけ。主＝このブラウザの閲覧ログ（実際に開いた本）、従＝Amazon の recencyRank。
+// 比較関数の中で毎回ログを引くと O(グループ数 × 冊数 × log) になるので、1グループ1回だけ先に計算しておく。
+function recencyLogRank(list) {
+  const byAsin = new Map();
+  loadRecent().forEach((e, i) => { if (!byAsin.has(e.asin)) byAsin.set(e.asin, i); }); // 0 = 最後に開いた本
+  const out = new Map();
+  for (const g of list) {
+    let best = Infinity; // ログに無いグループ
+    for (const { book } of g.books) {
+      const r = byAsin.get(book.asin);
+      if (r != null && r < best) best = r;
+    }
+    out.set(g, best);
+  }
+  return out;
+}
+
 function sortGroups(list) {
   const sorted = [...list];
   if (SORT_MODE === 'recency') {
-    sorted.sort((a, b) => (a.recency - b.recency) || a.name.localeCompare(b.name, 'ja'));
+    // 閲覧ログに無いグループは同順位(Infinity)になるので、recencyRank → 名前順で決着させる。
+    // Infinity 同士を引き算すると NaN になり並びが不定になるため、必ず !== で先に振り分けること。
+    const log = recencyLogRank(sorted);
+    sorted.sort((a, b) => {
+      const la = log.get(a), lb = log.get(b);
+      if (la !== lb) return la - lb;
+      if (a.recency !== b.recency) return a.recency - b.recency;
+      return a.name.localeCompare(b.name, 'ja');
+    });
   } else {
     sorted.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
   }
@@ -1199,10 +1251,8 @@ document.getElementById('export-overrides').addEventListener('click', () => {
   }
   if (cleaned) saveLocalOverrides(LOCAL_OV);
 
-  // recency 情報が無い旧データでは「最近読んだ順」が意味を持たないので名前順に切替
-  if (!ALL_ITEMS.some(b => b.recencyRank != null) && SORT_MODE === 'recency') {
-    SORT_MODE = 'name';
-  }
+  // 「最近読んだ順」は閲覧ログ（このブラウザで開いた本）で機能するので、recencyRank を持たない
+  // 蔵書データでも名前順へ落とさない。履歴が空のうちは全グループが同順位になり、50音順と同じ並びに縮退する。
   document.getElementById('sort-select').value = SORT_MODE;
 
   rebuild(false);
